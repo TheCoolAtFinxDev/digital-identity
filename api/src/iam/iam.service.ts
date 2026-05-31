@@ -56,4 +56,28 @@ export class IamService {
     const permissions = await this.getEffectivePermissions(userId, scope);
     return permissions.includes(permission);
   }
+
+  // ── Service accounts (F3) — same role/permission model, different principal ──
+
+  async getServiceAccountPermissions(serviceAccountId: string, scope?: ScopeFilter): Promise<string[]> {
+    const scopeClause = scope
+      ? { OR: [{ scope: RoleScope.GLOBAL }, { scope: scope.type, scopeId: scope.scopeId ?? null }] }
+      : { scope: RoleScope.GLOBAL };
+
+    const assignments = await this.prisma.serviceAccountRole.findMany({
+      where: { serviceAccountId, isActive: true, AND: [scopeClause] },
+      include: { role: { include: { permissions: { include: { permission: true } } } } },
+    });
+
+    const codes = new Set<string>();
+    for (const a of assignments) {
+      for (const rp of a.role.permissions) codes.add(rp.permission.code);
+    }
+    return Array.from(codes);
+  }
+
+  async hasServiceAccountPermission(serviceAccountId: string, permission: string, scope?: ScopeFilter): Promise<boolean> {
+    const permissions = await this.getServiceAccountPermissions(serviceAccountId, scope);
+    return permissions.includes(permission);
+  }
 }

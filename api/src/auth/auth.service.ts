@@ -54,4 +54,28 @@ export class AuthService {
 
     return { accessToken, expiresIn: expiresInSeconds };
   }
+
+  /** OAuth2 client-credentials grant for machine-to-machine (service account) access. */
+  async issueServiceToken(clientId: string, clientSecret: string) {
+    const sa = await this.prisma.serviceAccount.findUnique({ where: { clientId } });
+    const hash = sa?.secretHash ?? TIMING_SAFE_DUMMY;
+    const credentialsValid = await bcrypt.compare(clientSecret, hash);
+
+    if (!sa || !sa.isActive || !credentialsValid) {
+      throw new UnauthorizedException('Invalid client credentials');
+    }
+
+    const expiresIn = process.env.SERVICE_TOKEN_EXPIRES_IN ?? '1h';
+    const accessToken = this.jwt.sign(
+      { sub: sa.clientId, serviceAccountId: sa.id, principalType: 'service', name: sa.name },
+      { expiresIn },
+    );
+    const expiresInSeconds = expiresIn.endsWith('h') ? parseInt(expiresIn) * 3600 : parseInt(expiresIn);
+
+    await this.prisma.auditLog.create({
+      data: { event: AuditEvent.SERVICE_TOKEN_ISSUED, detail: { clientId: sa.clientId, serviceAccountId: sa.id } },
+    });
+
+    return { access_token: accessToken, token_type: 'Bearer', expires_in: expiresInSeconds };
+  }
 }

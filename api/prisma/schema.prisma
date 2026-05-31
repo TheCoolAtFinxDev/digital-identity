@@ -109,6 +109,41 @@ enum AuditEvent {
   KEY_GENERATED
   DOCUMENT_SIGNED
   SIGNATURE_VERIFIED
+  SERVICE_ACCOUNT_CREATED
+  SERVICE_ACCOUNT_DEACTIVATED
+  SERVICE_TOKEN_ISSUED
+}
+
+// ─── Service Accounts (F3 machine-to-machine access) ──────────────────────────
+
+model ServiceAccount {
+  id              String               @id @default(uuid())
+  clientId        String               @unique
+  secretHash      String
+  name            String
+  description     String?
+  isActive        Boolean              @default(true)
+  createdBy       String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  roleAssignments ServiceAccountRole[]
+
+  @@index([isActive])
+}
+
+model ServiceAccountRole {
+  id               String         @id @default(uuid())
+  serviceAccountId String
+  serviceAccount   ServiceAccount @relation(fields: [serviceAccountId], references: [id], onDelete: Cascade)
+  roleId           String
+  role             Role           @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  scope            RoleScope      @default(GLOBAL)
+  scopeId          String?
+  isActive         Boolean        @default(true)
+  assignedBy       String
+  assignedAt       DateTime       @default(now())
+
+  @@index([serviceAccountId, isActive])
 }
 
 // ─── Signature (F1 signing service non-repudiation log) ───────────────────────
@@ -306,8 +341,9 @@ model Role {
   isSystem    Boolean  @default(false)
   createdAt   DateTime @default(now())
 
-  permissions RolePermission[]
-  assignments UserRoleAssignment[]
+  permissions        RolePermission[]
+  assignments        UserRoleAssignment[]
+  serviceAssignments ServiceAccountRole[]
 }
 
 model Permission {

@@ -28,24 +28,32 @@ export class PermissionGuard implements CanActivate {
     if (!permission) return true;
 
     const req = context.switchToHttp().getRequest();
+    const principalType: string = req.user?.principalType ?? 'user';
     const userId: string | undefined = req.user?.userId;
+    const serviceAccountId: string | undefined = req.user?.serviceAccountId;
 
-    if (!userId) {
-      // Authenticated via old-format token (no userId) or request bypassed JwtAuthGuard
+    // Resolve permission for either principal type (user or service account)
+    let allowed = false;
+    if (principalType === 'service' && serviceAccountId) {
+      allowed = await this.iam.hasServiceAccountPermission(serviceAccountId, permission);
+    } else if (userId) {
+      allowed = await this.iam.hasPermission(userId, permission);
+    } else {
+      // Old-format token (no userId) or bypassed JwtAuthGuard
       throw new ForbiddenException('Permission check requires a valid session token');
     }
-
-    const allowed = await this.iam.hasPermission(userId, permission);
 
     if (!allowed) {
       await this.prisma.auditLog.create({
         data: {
           event: AuditEvent.PERMISSION_CHECK_FAILED,
-          userId,
+          userId: userId ?? null,
           detail: {
             permissionCode: permission,
             route: req.url,
             method: req.method,
+            principalType,
+            serviceAccountId: serviceAccountId ?? null,
           },
         },
       });

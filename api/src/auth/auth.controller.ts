@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swa
 import { IamService } from '../iam/iam.service';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
+import { TokenRequestDto } from './dto/token-request.dto';
 import { TokenResponseDto } from './dto/token-response.dto';
 import { Public } from './public.decorator';
 
@@ -15,7 +16,7 @@ export class AuthController {
   ) {}
 
   @Public()
-  @ApiOperation({ summary: 'Obtain a JWT access token' })
+  @ApiOperation({ summary: 'Obtain a JWT access token (human login)' })
   @ApiOkResponse({ type: TokenResponseDto })
   @HttpCode(200)
   @Post('login')
@@ -23,20 +24,34 @@ export class AuthController {
     return this.svc.login(dto.username, dto.password);
   }
 
+  @Public()
+  @ApiOperation({ summary: 'OAuth2 client-credentials grant for service accounts (machine-to-machine)' })
+  @HttpCode(200)
+  @Post('token')
+  token(@Body() dto: TokenRequestDto) {
+    return this.svc.issueServiceToken(dto.clientId, dto.clientSecret);
+  }
+
   @ApiBearerAuth()
   @ApiOperation({
-    summary: 'Get the current user identity and effective GLOBAL permissions',
-    description: 'Used by the portal to gate UI actions. Returns GLOBAL-scoped permission codes; ' +
-      'scope-narrowed permissions (e.g. ENTITY-scoped cert:issue) are still enforced server-side per request.',
+    summary: 'Get the current principal identity and effective GLOBAL permissions',
+    description: 'Used to gate actions. Works for both users and service accounts. Returns GLOBAL-scoped ' +
+      'permission codes; scope-narrowed permissions are still enforced server-side per request.',
   })
   @Get('me')
   async me(@Request() req: any) {
+    const principalType: string = req.user?.principalType ?? 'user';
+    if (principalType === 'service' && req.user?.serviceAccountId) {
+      const permissions = await this.iam.getServiceAccountPermissions(req.user.serviceAccountId);
+      return {
+        principalType,
+        serviceAccountId: req.user.serviceAccountId,
+        name: req.user?.name ?? null,
+        permissions,
+      };
+    }
     const userId: string | undefined = req.user?.userId;
     const permissions = userId ? await this.iam.getEffectivePermissions(userId) : [];
-    return {
-      userId: userId ?? null,
-      username: req.user?.username ?? null,
-      permissions,
-    };
+    return { principalType: 'user', userId: userId ?? null, username: req.user?.username ?? null, permissions };
   }
 }

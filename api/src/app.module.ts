@@ -16,6 +16,7 @@ import { PermissionGuard } from './iam/permission.guard';
 import { ObjectModule } from './object/object.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { RolesModule } from './roles/roles.module';
+import { ServiceAccountsModule } from './service-accounts/service-accounts.module';
 import { SigningModule } from './signing/signing.module';
 import { TrustModule } from './trust/trust.module';
 import { UsersModule } from './users/users.module';
@@ -39,6 +40,7 @@ import { AuditModule } from './audit/audit.module';
     AuditModule,
     UsersModule,
     RolesModule,
+    ServiceAccountsModule,
     SigningModule,
     TrustModule,
   ],

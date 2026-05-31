@@ -1,0 +1,4 @@
+-- ─── Migration 18: service-account audit events (isolated enum changes) ──────
+ALTER TYPE "AuditEvent" ADD VALUE IF NOT EXISTS 'SERVICE_ACCOUNT_CREATED';
+ALTER TYPE "AuditEvent" ADD VALUE IF NOT EXISTS 'SERVICE_ACCOUNT_DEACTIVATED';
+ALTER TYPE "AuditEvent" ADD VALUE IF NOT EXISTS 'SERVICE_TOKEN_ISSUED';
