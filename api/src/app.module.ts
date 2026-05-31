@@ -17,6 +17,7 @@ import { ObjectModule } from './object/object.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { RolesModule } from './roles/roles.module';
 import { SigningModule } from './signing/signing.module';
+import { TrustModule } from './trust/trust.module';
 import { UsersModule } from './users/users.module';
 import { VerificationModule } from './verification/verification.module';
 import { AuditModule } from './audit/audit.module';
@@ -39,6 +40,7 @@ import { AuditModule } from './audit/audit.module';
     UsersModule,
     RolesModule,
     SigningModule,
+    TrustModule,
   ],
   controllers: [AppController],
   providers: [

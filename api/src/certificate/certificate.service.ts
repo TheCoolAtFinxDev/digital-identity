@@ -376,13 +376,38 @@ export class CertificateService {
       data: { isRevoked: true, revokedAt: new Date(), revokedBy },
     });
 
+    // Also mark it revoked in the CA database (index.txt) so the published CRL
+    // reflects it. Best-effort: the DB flag is authoritative for status; failing
+    // to update index.txt must not undo the user-visible revocation.
+    let caDbUpdated = true;
+    try {
+      await this.revokeInCaDatabase(cert.certPem);
+    } catch (err) {
+      caDbUpdated = false;
+    }
+
     await this.audit(AuditEvent.CERTIFICATE_REVOKED, {
       requestId: cert.requestId,
       userId,
-      detail: { serial, revokedBy },
+      detail: { serial, revokedBy, caDbUpdated },
     });
 
     return updated;
+  }
+
+  /** Mark a certificate revoked in the CA database (index.txt) for CRL generation. */
+  private async revokeInCaDatabase(certPem: string): Promise<void> {
+    const caDir = process.env.CA_DIR ?? '/opt/ee-ca';
+    const work = mkdtempSync(join(tmpdir(), 'revoke-'));
+    const certPath = join(work, 'cert.pem');
+    writeFileSync(certPath, certPem);
+    try {
+      await execFile('openssl', [
+        'ca', '-config', `${caDir}/openssl.cnf`, '-revoke', certPath,
+      ], { timeout: 15000 });
+    } finally {
+      try { rmSync(work, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
   }
 
   // ─── Private helpers ───────────────────────────────────────────────────────
