@@ -12,6 +12,7 @@ import { CertRequestQueryDto } from './dto/cert-request-query.dto';
 import { CreateCertRequestDto } from './dto/create-cert-request.dto';
 import { IssueManagedDto } from './dto/issue-managed.dto';
 import { RevokeCertDto } from './dto/revoke-cert.dto';
+import { RequirePermission } from '../iam/permission.decorator';
 
 @ApiBearerAuth()
 @ApiTags('certificates')
@@ -21,6 +22,7 @@ export class CertificateController {
 
   @ApiOperation({ summary: 'List certificate requests (paginated)' })
   @ApiOkResponse({ type: CertRequestPageDto })
+  @RequirePermission('cert:read')
   @Get('cert-requests')
   listRequests(@Query() q: CertRequestQueryDto) {
     const page = Math.max(1, parseInt(q.page ?? '1', 10) || 1);
@@ -30,6 +32,7 @@ export class CertificateController {
 
   @ApiOperation({ summary: 'Submit a new certificate signing request' })
   @ApiCreatedResponse({ type: CertRequestResponseDto })
+  @RequirePermission('cert:request')
   @Post('cert-requests')
   createRequest(@Body() dto: CreateCertRequestDto, @Request() req: any) {
     return this.svc.createRequest(dto, req.user?.userId);
@@ -43,6 +46,8 @@ export class CertificateController {
   @HttpCode(201)
   @Post('cert-requests/managed')
   issueManaged(@Body() dto: IssueManagedDto, @Request() req: any) {
+    // Scoped cert:issue resolution is performed inside the service because the
+    // target entityId is part of the request body.
     return this.svc.issueManagedCertificate(dto.entityId, req.user.userId);
   }
 
@@ -58,6 +63,7 @@ export class CertificateController {
 
   @ApiOperation({ summary: 'Get a certificate request by ID' })
   @ApiOkResponse({ type: CertRequestResponseDto })
+  @RequirePermission('cert:read')
   @Get('cert-requests/:id')
   getRequest(@Param('id') id: string) {
     return this.svc.getRequest(id);
@@ -65,6 +71,7 @@ export class CertificateController {
 
   @ApiOperation({ summary: 'Get an issued certificate by serial number' })
   @ApiOkResponse({ type: CertificateResponseDto })
+  @RequirePermission('cert:read')
   @Get('certificates/:serial')
   getCertificate(@Param('serial') serial: string, @Request() req: any) {
     return this.svc.getCertificate(serial, req.user?.userId);
@@ -76,6 +83,7 @@ export class CertificateController {
   })
   @ApiOkResponse({ type: CertificateResponseDto })
   @HttpCode(200)
+  @RequirePermission('cert:revoke')
   @Patch('certificates/:serial/revoke')
   revokeCertificate(
     @Param('serial') serial: string,

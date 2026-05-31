@@ -4,6 +4,7 @@ import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swa
 import { AuditService } from './audit.service';
 import { AuditQueryDto } from './dto/audit-query.dto';
 import { AuditLogPageDto } from './dto/audit-log-response.dto';
+import { RequirePermission } from '../iam/permission.decorator';
 
 // Audit is a read-only, permission-gated endpoint consumed by the portal's
 // audit dashboard (filtering + pagination). The default 10 req/60s global limit
@@ -21,6 +22,7 @@ export class AuditController {
     description: 'Returns paginated audit log entries. Filterable by event type, request ID, entity ID, and date range.',
   })
   @ApiOkResponse({ type: AuditLogPageDto })
+  @RequirePermission('audit:read')
   @Get()
   query(@Query() q: AuditQueryDto) {
     return this.svc.query(q);
