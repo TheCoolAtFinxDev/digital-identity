@@ -107,6 +107,27 @@ enum AuditEvent {
   ROLE_REVOKED
   PERMISSION_CHECK_FAILED
   KEY_GENERATED
+  DOCUMENT_SIGNED
+  SIGNATURE_VERIFIED
+}
+
+// ─── Signature (F1 signing service non-repudiation log) ───────────────────────
+
+model Signature {
+  id           String   @id @default(uuid())
+  entityId     String
+  entity       Entity   @relation(fields: [entityId], references: [id])
+  certSerial   String   // serial of the cert whose key signed
+  hashAlg      String   @default("SHA-256")
+  payloadHash  String   // hex SHA-256 of the signed content
+  signatureB64 String   // base64 signature bytes
+  mechanism    String   @default("SHA256-RSA-PKCS")
+  documentName String?
+  signedById   String?  // operator/service that invoked signing
+  createdAt    DateTime @default(now())
+
+  @@index([entityId])
+  @@index([certSerial])
 }
 
 // ─── Entity ───────────────────────────────────────────────────────────────────
@@ -127,6 +148,7 @@ model Entity {
   verificationCases    VerificationCase[]
   subjectRelationships EntityRelationship[] @relation("SubjectEntity")
   objectRelationships  EntityRelationship[] @relation("ObjectEntity")
+  signatures           Signature[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

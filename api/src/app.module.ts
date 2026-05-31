@@ -16,6 +16,7 @@ import { PermissionGuard } from './iam/permission.guard';
 import { ObjectModule } from './object/object.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { RolesModule } from './roles/roles.module';
+import { SigningModule } from './signing/signing.module';
 import { UsersModule } from './users/users.module';
 import { VerificationModule } from './verification/verification.module';
 import { AuditModule } from './audit/audit.module';
@@ -37,6 +38,7 @@ import { AuditModule } from './audit/audit.module';
     AuditModule,
     UsersModule,
     RolesModule,
+    SigningModule,
   ],
   controllers: [AppController],
   providers: [
