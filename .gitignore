@@ -1,0 +1,23 @@
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+coverage/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime evidence uploads may contain sensitive KYC/KYB documents.
+storage/evidence/**
+!storage/evidence/.gitkeep
+
+# Generated development CA material and OpenSSL runtime state.
+pki/private/
+pki/newcerts/
+pki/certs/
+pki/crl/
+pki/csr/
+pki/index.txt*
+pki/serial*
+pki/crlnumber*

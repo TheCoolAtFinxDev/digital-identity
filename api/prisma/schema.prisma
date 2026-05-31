@@ -1,0 +1,474 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Certificate Request ──────────────────────────────────────────────────────
+
+model CertificateRequest {
+  id          String        @id @default(uuid())
+  status      RequestStatus @default(NEW)
+  csrPem      String
+  profile     String        @default("usr_entity_cert")
+  subject     String?
+  keyBits     Int?
+  entityId    String?
+  entity      Entity?       @relation(fields: [entityId], references: [id])
+  certificate Certificate?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([status])
+  @@index([entityId])
+}
+
+enum RequestStatus {
+  NEW
+  ISSUED
+  REJECTED
+}
+
+// ─── Issued Certificate ───────────────────────────────────────────────────────
+
+model Certificate {
+  id          String             @id @default(uuid())
+  serial      String             @unique
+  certPem     String
+  profile     String
+  subject     String
+  issuer      String?
+  fingerprint String?
+  validFrom   DateTime
+  validTo     DateTime
+  isRevoked   Boolean            @default(false)
+  revokedAt   DateTime?
+  revokedBy   String?
+  hsmManaged  Boolean            @default(false) // key generated in & custodied by the HSM
+  hsmKeyLabel String?            // PKCS#11 object label of the in-HSM private key
+  hsmKeyId    String?            // PKCS#11 object id (hex)
+  requestId   String             @unique
+  request     CertificateRequest @relation(fields: [requestId], references: [id])
+  createdAt   DateTime           @default(now())
+}
+
+// ─── Audit Log ────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id        String     @id @default(uuid())
+  event     AuditEvent
+  requestId String?
+  entityId  String?
+  userId    String?    // Phase 1-B: tracks operator who triggered the event
+  detail    Json?
+  createdAt DateTime   @default(now())
+
+  @@index([createdAt(sort: Desc)])
+  @@index([event])
+  @@index([userId])
+}
+
+enum AuditEvent {
+  // ── Phase 1 ──────────────────────────────────────────
+  REQUEST_CREATED
+  CERTIFICATE_ISSUED
+  REQUEST_REJECTED
+  CERTIFICATE_VIEWED
+  CERTIFICATE_REVOKED
+  VERIFICATION_PERFORMED
+  ENTITY_CREATED
+  KYC_STATUS_UPDATED
+  OBJECT_CREATED
+  OBJECT_VIEWED
+  LOGIN_SUCCESS
+  LOGIN_FAILED
+  // ── Phase 1-B ─────────────────────────────────────────
+  ENTITY_STATUS_CHANGED
+  ENTITY_TYPE_SET
+  PROFILE_CREATED
+  PROFILE_UPDATED
+  CASE_CREATED
+  CASE_SUBMITTED
+  CASE_REVIEWED
+  CASE_APPROVED
+  CASE_REJECTED
+  CASE_WITHDRAWN
+  EVIDENCE_UPLOADED
+  EVIDENCE_DELETED
+  RELATIONSHIP_CREATED
+  RELATIONSHIP_UPDATED
+  RELATIONSHIP_STATUS_CHANGED
+  USER_CREATED
+  USER_DEACTIVATED
+  ROLE_ASSIGNED
+  ROLE_REVOKED
+  PERMISSION_CHECK_FAILED
+  KEY_GENERATED
+}
+
+// ─── Entity ───────────────────────────────────────────────────────────────────
+
+model Entity {
+  id         String               @id @default(uuid())
+  name       String
+  country    String
+  entityType EntityType           @default(ORGANISATION)
+  status     EntityStatus         @default(DRAFT)
+  kycStatus  KycStatus            @default(PENDING)  // Phase 1 compat — mirrors status
+  createdBy  String?              // userId of ISO operator who created this entity
+  requests   CertificateRequest[]
+  objects    ObjectRecord[]
+
+  personProfile        PersonProfile?
+  orgProfile           OrganisationProfile?
+  verificationCases    VerificationCase[]
+  subjectRelationships EntityRelationship[] @relation("SubjectEntity")
+  objectRelationships  EntityRelationship[] @relation("ObjectEntity")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([entityType])
+  @@index([status])
+  @@index([createdBy])
+}
+
+enum EntityType {
+  PERSON
+  ORGANISATION
+}
+
+enum EntityStatus {
+  DRAFT               // created, profile not yet complete
+  PENDING_VERIFICATION // profile complete, KYC/KYB not yet started
+  UNDER_REVIEW        // verification case is open
+  APPROVED            // verified — may receive certificates
+  REJECTED            // verification was rejected
+  SUSPENDED           // was approved, now suspended
+}
+
+enum KycStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// ─── Object Record ────────────────────────────────────────────────────────────
+
+model ObjectRecord {
+  id         String     @id @default(uuid())
+  objectType ObjectType
+  reference  String
+  entityId   String?
+  entity     Entity?    @relation(fields: [entityId], references: [id])
+  metadata   Json?
+  createdAt  DateTime   @default(now())
+}
+
+enum ObjectType {
+  DOCUMENT
+  TICKET
+  LICENSE
+  APPLICATION
+  CREDENTIAL
+  DIGITAL_ASSET
+}
+
+// ─── Person Profile ───────────────────────────────────────────────────────────
+
+model PersonProfile {
+  id             String       @id @default(uuid())
+  entityId       String       @unique
+  entity         Entity       @relation(fields: [entityId], references: [id])
+  firstName      String
+  middleName     String?
+  lastName       String
+  dateOfBirth    DateTime
+  nationality    String
+  idType         PersonIdType
+  idNumber       String
+  idIssuedBy     String?
+  idIssuedDate   DateTime?
+  idExpiryDate   DateTime?
+  taxNumber      String?
+  addressLine1   String
+  addressLine2   String?
+  city           String
+  region         String?
+  postalCode     String?
+  addressCountry String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+enum PersonIdType {
+  PASSPORT
+  NATIONAL_ID
+  DRIVERS_LICENCE
+  BIRTH_CERTIFICATE
+  RESIDENCE_PERMIT
+}
+
+// ─── Organisation Profile ─────────────────────────────────────────────────────
+
+model OrganisationProfile {
+  id                  String       @id @default(uuid())
+  entityId            String       @unique
+  entity              Entity       @relation(fields: [entityId], references: [id])
+  legalName           String
+  tradingName         String?
+  registrationNumber  String
+  registrationDate    DateTime?
+  registrationCountry String
+  businessType        BusinessType
+  industrySector      String?
+  taxNumber           String?
+  vatNumber           String?
+  regAddressLine1     String
+  regAddressLine2     String?
+  regCity             String
+  regRegion           String?
+  regPostalCode       String?
+  regCountry          String
+  contactEmail        String?
+  contactPhone        String?
+  websiteUrl          String?
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+}
+
+enum BusinessType {
+  SOLE_PROPRIETOR
+  PARTNERSHIP
+  PRIVATE_LIMITED
+  PUBLIC_LIMITED
+  TRUST
+  NGO
+  COOPERATIVE
+  GOVERNMENT_ENTITY
+  OTHER
+}
+
+// ─── User ─────────────────────────────────────────────────────────────────────
+
+model User {
+  id           String    @id @default(uuid())
+  username     String    @unique
+  email        String    @unique
+  passwordHash String
+  displayName  String?
+  isActive     Boolean   @default(true)
+  createdBy    String?   // userId of admin who created this user
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  roleAssignments UserRoleAssignment[]
+  casesCreated    VerificationCase[]   @relation("CaseCreatedBy")
+  casesReviewed   VerificationCase[]   @relation("CaseReviewedBy")
+  casesApproved   VerificationCase[]   @relation("CaseApprovedBy")
+  casesRejected   VerificationCase[]   @relation("CaseRejectedBy")
+
+  @@index([isActive])
+}
+
+// ─── RBAC ─────────────────────────────────────────────────────────────────────
+
+model Role {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  description String?
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  permissions RolePermission[]
+  assignments UserRoleAssignment[]
+}
+
+model Permission {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  description String?
+  resource    String
+  action      String
+
+  roles RolePermission[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model UserRoleAssignment {
+  id         String    @id @default(uuid())
+  userId     String
+  roleId     String
+  scope      RoleScope @default(GLOBAL)
+  scopeId    String?   // null for GLOBAL; entityId/orgId for narrower scopes
+  assignedBy String    // userId of operator who assigned this role
+  assignedAt DateTime  @default(now())
+  expiresAt  DateTime?
+  isActive   Boolean   @default(true)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isActive])
+  @@index([scope, scopeId])
+}
+
+enum RoleScope {
+  GLOBAL
+  ORGANISATION
+  ENTITY
+  DEPARTMENT // reserved — no Department model yet; treated as ENTITY scope
+}
+
+// ─── Verification Workflow ────────────────────────────────────────────────────
+
+model VerificationCase {
+  id              String                 @id @default(uuid())
+  entityId        String
+  entity          Entity                 @relation(fields: [entityId], references: [id])
+  caseType        VerificationCaseType
+  status          VerificationCaseStatus @default(DRAFT)
+  priority        CasePriority           @default(NORMAL)
+  createdById     String
+  createdBy       User                   @relation("CaseCreatedBy",  fields: [createdById],  references: [id])
+  reviewedById    String?
+  reviewedBy      User?                  @relation("CaseReviewedBy", fields: [reviewedById], references: [id])
+  approvedById    String?
+  approvedBy      User?                  @relation("CaseApprovedBy", fields: [approvedById], references: [id])
+  rejectedById    String?
+  rejectedBy      User?                  @relation("CaseRejectedBy", fields: [rejectedById], references: [id])
+  rejectionReason String?
+  reviewNotes     String?
+  dueDate         DateTime?
+  submittedAt     DateTime?
+  reviewedAt      DateTime?
+  approvedAt      DateTime?
+  rejectedAt      DateTime?
+  evidence        VerificationEvidence[]
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  @@index([entityId])
+  @@index([status])
+  @@index([createdById])
+}
+
+enum VerificationCaseType {
+  KYC
+  KYB
+  RE_VERIFICATION
+}
+
+enum VerificationCaseStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
+enum CasePriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+model VerificationEvidence {
+  id           String               @id @default(uuid())
+  caseId       String
+  case         VerificationCase     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  documentType EvidenceDocumentType
+  filePath     String
+  fileName     String
+  fileSize     Int
+  mimeType     String
+  sha256Hash   String
+  uploadedById String
+  verifiedAt   DateTime?
+  verifiedById String?
+  notes        String?
+  createdAt    DateTime             @default(now())
+
+  @@index([caseId])
+}
+
+enum EvidenceDocumentType {
+  PASSPORT
+  NATIONAL_ID
+  DRIVERS_LICENCE
+  COMPANY_CERTIFICATE
+  MEMORANDUM_OF_INCORPORATION
+  TAX_CERTIFICATE
+  VAT_CERTIFICATE
+  UTILITY_BILL
+  BANK_STATEMENT
+  PROOF_OF_ADDRESS
+  SHAREHOLDING_REGISTER
+  RESOLUTION_OF_DIRECTORS
+  OTHER
+}
+
+// ─── Entity Relationships ─────────────────────────────────────────────────────
+
+model EntityRelationship {
+  id               String             @id @default(uuid())
+  subjectEntityId  String
+  subjectEntity    Entity             @relation("SubjectEntity", fields: [subjectEntityId], references: [id])
+  objectEntityId   String
+  objectEntity     Entity             @relation("ObjectEntity",  fields: [objectEntityId],  references: [id])
+  relationshipType RelationshipType
+  ownershipPercent Float?
+  startDate        DateTime           @default(now())
+  endDate          DateTime?
+  status           RelationshipStatus @default(ACTIVE)
+  notes            String?
+  createdById      String
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  @@index([subjectEntityId])
+  @@index([objectEntityId])
+  @@index([status])
+  @@index([relationshipType])
+}
+
+enum RelationshipType {
+  EMPLOYEE_OF
+  CUSTOMER_OF
+  VENDOR_OF
+  DIRECTOR_OF
+  SHAREHOLDER_OF
+  BENEFICIAL_OWNER_OF
+  AUTHORIZED_REPRESENTATIVE_OF
+  AUTHORIZED_SIGNER_OF
+  ADMIN_OF
+  ISSUER_FOR
+  DELEGATED_OPERATOR_OF
+  SERVICE_PROVIDER_OF
+  SUBSIDIARY_OF
+  PARENT_OF
+  AFFILIATED_WITH
+  OTHER
+}
+
+enum RelationshipStatus {
+  ACTIVE
+  INACTIVE
+  PENDING_VERIFICATION
+}

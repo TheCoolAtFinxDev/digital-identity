@@ -1,0 +1,107 @@
+services:
+  ca-bootstrap:
+    image: public.ecr.aws/docker/library/ubuntu:22.04
+    container_name: di-ca-bootstrap
+    working_dir: /opt/ee-ca
+    volumes:
+      - ./pki:/opt/ee-ca:z
+    command: ["/bin/bash", "-c", "apt-get update -qq && apt-get install -y -qq openssl && chmod +x /opt/ee-ca/init-ca.sh && /opt/ee-ca/init-ca.sh"]
+    restart: "no"
+
+  certsvc:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: di-certsvc
+    depends_on:
+      ca-bootstrap:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      softhsm:
+        condition: service_healthy
+    environment:
+      PORT: "8080"
+      CA_DIR: "/opt/ee-ca"
+      DATABASE_URL: "postgresql://${PGUSER:-certsvc}:${PGPASSWORD:-change_me_strong}@di-postgres:5432/${PGDATABASE:-certsvc}?schema=public"
+      JWT_SECRET: "${JWT_SECRET:-change_me_jwt_secret_must_be_long_and_random}"
+      JWT_EXPIRES_IN: "${JWT_EXPIRES_IN:-24h}"
+      AUTH_USERNAME: "${AUTH_USERNAME:-admin}"
+      AUTH_PASSWORD: "${AUTH_PASSWORD:-change_me_admin_password}"
+      # DEV ONLY: lets ADMIN (iso:manage) bypass the 4-eyes distinct-user checks.
+      # Remove / set false before production to enforce strict separation of duties.
+      FOUR_EYES_ADMIN_OVERRIDE: "${FOUR_EYES_ADMIN_OVERRIDE:-true}"
+      # ── Network HSM (pkcs11-proxy client) ──
+      PKCS11_PROXY_SOCKET: "tcp://di-softhsm:5657"
+      PKCS11_MODULE: "/usr/local/lib/libpkcs11-proxy.so"
+      HSM_TOKEN_LABEL: "${HSM_TOKEN_LABEL:-econet-ca}"
+      HSM_USER_PIN: "${HSM_USER_PIN:-change_me_user_pin}"
+    volumes:
+      - ./pki:/opt/ee-ca:z
+      - ./storage/evidence:/app/storage/evidence:z
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+
+  postgres:
+    image: public.ecr.aws/docker/library/postgres:16
+    container_name: di-postgres
+    environment:
+      POSTGRES_USER: ${PGUSER:-certsvc}
+      POSTGRES_PASSWORD: ${PGPASSWORD:-change_me_strong}
+      POSTGRES_DB: ${PGDATABASE:-certsvc}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PGUSER:-certsvc}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  portal:
+    build:
+      context: ./portal
+      dockerfile: Dockerfile
+    container_name: di-portal
+    depends_on:
+      certsvc:
+        condition: service_healthy
+    ports:
+      - "4200:80"
+    restart: unless-stopped
+
+  softhsm:
+    build:
+      context: ./hsm
+      dockerfile: Dockerfile
+    container_name: di-softhsm
+    environment:
+      HSM_TOKEN_LABEL: "${HSM_TOKEN_LABEL:-econet-ca}"
+      HSM_SO_PIN: "${HSM_SO_PIN:-change_me_so_pin}"
+      HSM_USER_PIN: "${HSM_USER_PIN:-change_me_user_pin}"
+      PKCS11_DAEMON_SOCKET: "tcp://0.0.0.0:5657"
+    volumes:
+      - softhsm_tokens:/var/lib/softhsm/tokens
+    # pkcs11-proxy serves PKCS#11 over TCP 5657 to other containers
+    # (reachable as tcp://di-softhsm:5657 on the internal network).
+    # Not published to the host: plaintext without TLS-PSK, internal use only.
+    expose:
+      - "5657"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "PKCS11_PROXY_SOCKET=tcp://127.0.0.1:5657 pkcs11-tool --module /usr/local/lib/libpkcs11-proxy.so --list-slots >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  pgdata:
+  softhsm_tokens:

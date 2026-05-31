@@ -1,0 +1,24 @@
+# ─── OpenSSL pkcs11 engine config ────────────────────────────────────────────
+# Used ONLY for the managed-CSR step: it lets `openssl req` sign a CSR with a
+# private key that lives in the network HSM (via pkcs11-proxy). The CA signing
+# step keeps using the file-based intermediate key in openssl.cnf — no engine.
+#
+# Usage:
+#   OPENSSL_CONF=/opt/ee-ca/hsm-engine.cnf PKCS11_PROXY_SOCKET=tcp://di-softhsm:5657 \
+#     openssl req -new -engine pkcs11 -keyform engine \
+#       -key "pkcs11:token=econet-ca;object=<label>;type=private;pin-value=<pin>" ...
+
+openssl_conf = openssl_init
+
+[ openssl_init ]
+engines = engine_section
+
+[ engine_section ]
+pkcs11 = pkcs11_section
+
+[ pkcs11_section ]
+engine_id   = pkcs11
+dynamic_path = /usr/lib/x86_64-linux-gnu/engines-3/pkcs11.so
+# The proxy client module — forwards PKCS#11 calls to tcp://di-softhsm:5657
+MODULE_PATH = /usr/local/lib/libpkcs11-proxy.so
+init = 0
