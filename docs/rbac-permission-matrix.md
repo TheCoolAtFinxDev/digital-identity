@@ -173,6 +173,37 @@ passing it to `hasPermission`) would let scoped assignments work everywhere. Tha
 is a deliberate widening of the authorization surface across every guarded route
 and has not been done — it needs a decision, not a patch.
 
+## Organisational Structure
+
+| Method | Route | Permission |
+|---|---|---|
+| `POST` | `/v1/org-units` | `orgunit:create` |
+| `GET` | `/v1/org-units` | `orgunit:read` |
+| `GET` | `/v1/org-units/:id` | `orgunit:read` |
+| `PATCH` | `/v1/org-units/:id` | `orgunit:update` |
+| `PATCH` | `/v1/org-units/:id/head` | `orgunit:update` |
+| `PATCH` | `/v1/org-units/:id/deactivate` | `orgunit:update` |
+| `PATCH` | `/v1/users/:id/placement` | `user:update` |
+| `GET` | `/v1/users/:id/approval-chain` | `orgunit:read` |
+
+Seeded in migration `20260824000022_org_units`: ADMIN administers the structure,
+every other seeded role gets `orgunit:read` — approval routing depends on people
+being able to find their own unit and its head.
+
+Placing a person is gated on `user:update` rather than `orgunit:update` because
+it edits the user record (their unit, their line manager, and the verified PERSON
+entity behind their login).
+
+Structural rules — one active root per organisation, ORGANISATION > DIVISION >
+DEPARTMENT, no cycles, no self-management — are enforced in `OrgUnitsService`
+and, where a single row can express them, by database constraints.
+
+**Permission id allocation:** new codes start at `...0002-000000000040`. Ids 32-39
+are reserved because migration `20260803000019` conditionally claims 32 and 33
+for `signature:*` on databases where the original seed lost an id race. Two
+migrations claiming the same permission id is what silently disabled `/v1/objects`
+for every role, ADMIN included — allocate from the top, never reuse.
+
 ## Regression Checklist
 
 Before merging future route changes:
@@ -181,4 +212,4 @@ Before merging future route changes:
 - Every new permission code is seeded and assigned to the intended system roles.
 - Public routes use `@Public()` and are documented above.
 - Scoped permissions are checked in service code using the resolved target resource ID.
-- The Phase 1-B lifecycle script still passes after migrations are applied.
+- `bash scripts/ci.sh` passes: typecheck, unit tests, and the Phase 1-B, org-structure and feature suites.

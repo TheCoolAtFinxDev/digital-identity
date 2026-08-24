@@ -118,6 +118,12 @@ enum AuditEvent {
   // ── F5 document stamping ──────────────────────────────
   DOCUMENT_STAMPED
   DOCUMENT_VERIFIED
+  // ── Organisational structure ──────────────────────────
+  ORG_UNIT_CREATED
+  ORG_UNIT_UPDATED
+  ORG_UNIT_DEACTIVATED
+  ORG_UNIT_HEAD_CHANGED
+  USER_PLACEMENT_CHANGED
 }
 
 // ─── Service Accounts (F3 machine-to-machine access) ──────────────────────────
@@ -226,6 +232,8 @@ model Entity {
   objectRelationships  EntityRelationship[] @relation("ObjectEntity")
   signatures           Signature[]
   stampedDocuments     StampedDocument[]
+  orgUnits             OrgUnit[]
+  userIdentity         User?                @relation("UserPersonIdentity")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -276,6 +284,49 @@ enum ObjectType {
   APPLICATION
   CREDENTIAL
   DIGITAL_ASSET
+}
+
+// ─── Organisational Structure ─────────────────────────────────────────────────
+//
+// The internal shape of a verified ORGANISATION entity: organisation -> division
+// -> department. This is what makes an institutional stamp meaningful — a stamp
+// is released by a unit, signed with that unit's own key, and approved by the
+// people who head it.
+//
+// Kept separate from Entity on purpose: a department is not a legal entity, has
+// no KYB, and must never appear in a verification queue.
+
+model OrgUnit {
+  id         String      @id @default(uuid())
+  entityId   String // the verified ORGANISATION entity this structure belongs to
+  entity     Entity      @relation(fields: [entityId], references: [id])
+  unitType   OrgUnitType
+  name       String
+  code       String? // short label used on the stamp, e.g. "FIN"
+  parentId   String?
+  parent     OrgUnit?    @relation("OrgUnitTree", fields: [parentId], references: [id])
+  children   OrgUnit[]   @relation("OrgUnitTree")
+  // HOD of a department, head of a division. Nullable: seats fall vacant, and a
+  // vacant seat must not delete the unit or its history.
+  headUserId String?
+  head       User?       @relation("OrgUnitHead", fields: [headUserId], references: [id])
+  isActive   Boolean     @default(true)
+  createdBy  String?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  members User[] @relation("OrgUnitMembers")
+
+  @@index([entityId])
+  @@index([parentId])
+  @@index([headUserId])
+  @@index([entityId, unitType])
+}
+
+enum OrgUnitType {
+  ORGANISATION // the root; exactly one active root per entity
+  DIVISION
+  DEPARTMENT
 }
 
 // ─── Person Profile ───────────────────────────────────────────────────────────
@@ -366,7 +417,21 @@ model User {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
+  // ── Place on the org chart (WP-2.2) ──────────────────────────────────────
+  // A staff login is backed by a verified PERSON entity — that link is what
+  // makes a personal signature attributable to a named, KYC'd individual.
+  // Identity operators have no personal entity, hence nullable.
+  personEntityId String? @unique
+  personEntity   Entity? @relation("UserPersonIdentity", fields: [personEntityId], references: [id])
+  orgUnitId      String?
+  orgUnit        OrgUnit? @relation("OrgUnitMembers", fields: [orgUnitId], references: [id])
+  // Line manager: the first pair of eyes on a stamp request.
+  managerId      String?
+  manager        User?   @relation("UserManager", fields: [managerId], references: [id])
+  reports        User[]  @relation("UserManager")
+
   roleAssignments UserRoleAssignment[]
+  unitsHeaded     OrgUnit[]            @relation("OrgUnitHead")
   casesCreated    VerificationCase[]   @relation("CaseCreatedBy")
   casesReviewed   VerificationCase[]   @relation("CaseReviewedBy")
   casesApproved   VerificationCase[]   @relation("CaseApprovedBy")

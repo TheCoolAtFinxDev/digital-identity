@@ -101,6 +101,13 @@ else
   FAILED="$FAILED phase-1b"
 fi
 
+stage "Org structure suite"
+if bash scripts/e2e-org-structure.sh "$BASE" 2>&1 | tee "$LOGDIR/e2e-org-structure.log" | tail -20; then
+  printf "${GRN}  org structure suite passed${NC}\n"
+else
+  FAILED="$FAILED org-structure"
+fi
+
 stage "Feature suite (F1-F6)"
 if bash scripts/e2e-features.sh "$BASE" 2>&1 | tee "$LOGDIR/e2e-features.log" | tail -25; then
   printf "${GRN}  feature suite passed${NC}\n"

@@ -14,6 +14,7 @@ import { IamModule } from './iam/iam.module';
 import { VerificationCasesModule } from './verification-cases/verification-cases.module';
 import { PermissionGuard } from './iam/permission.guard';
 import { ObjectModule } from './object/object.module';
+import { OrgUnitsModule } from './org-units/org-units.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { RolesModule } from './roles/roles.module';
 import { ServiceAccountsModule } from './service-accounts/service-accounts.module';
@@ -37,6 +38,7 @@ import { AuditModule } from './audit/audit.module';
     EntityRelationshipsModule,
     VerificationCasesModule,
     ObjectModule,
+    OrgUnitsModule,
     VerificationModule,
     AuditModule,
     UsersModule,
