@@ -11,6 +11,8 @@ import { CertRequestPageDto, CertRequestResponseDto, CertificateResponseDto } fr
 import { CertRequestQueryDto } from './dto/cert-request-query.dto';
 import { CreateCertRequestDto } from './dto/create-cert-request.dto';
 import { IssueManagedDto } from './dto/issue-managed.dto';
+import { CertListQueryDto } from './dto/cert-list-query.dto';
+import { RenewManagedDto } from './dto/renew-managed.dto';
 import { RevokeCertDto } from './dto/revoke-cert.dto';
 import { RequirePermission } from '../iam/permission.decorator';
 
@@ -67,6 +69,29 @@ export class CertificateController {
   @Get('cert-requests/:id')
   getRequest(@Param('id') id: string) {
     return this.svc.getRequest(id);
+  }
+
+  @ApiOperation({ summary: 'List/filter issued certificates (by entity, expiry window)' })
+  @ApiOkResponse()
+  @RequirePermission('cert:read')
+  @Get('certificates')
+  listCertificates(@Query() q: CertListQueryDto) {
+    return this.svc.listCertificates({
+      entityId: q.entityId,
+      expiringInDays: q.expiringInDays,
+      includeRevoked: q.includeRevoked,
+    });
+  }
+
+  @ApiOperation({
+    summary: 'Renew (and optionally rotate) an entity\'s managed certificate',
+    description: 'Issues a fresh HSM-managed certificate first (no coverage gap), then optionally revokes the previously active managed cert(s). Requires cert:issue + APPROVED entity.',
+  })
+  @ApiCreatedResponse({ type: CertificateResponseDto })
+  @HttpCode(201)
+  @Post('certificates/renew')
+  renew(@Body() dto: RenewManagedDto, @Request() req: any) {
+    return this.svc.renewManaged(dto.entityId, req.user.userId, dto.revokePrevious ?? false);
   }
 
   @ApiOperation({ summary: 'Get an issued certificate by serial number' })

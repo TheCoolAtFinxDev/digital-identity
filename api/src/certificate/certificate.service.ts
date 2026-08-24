@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
@@ -25,6 +26,8 @@ const { ENTITY, ORGANISATION } = { ENTITY: 'ENTITY' as const, ORGANISATION: 'ORG
 
 @Injectable()
 export class CertificateService {
+  private readonly logger = new Logger(CertificateService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly policy: PolicyService,
@@ -141,10 +144,13 @@ export class CertificateService {
 
     // ── Signing ──────────────────────────────────────────────────────────────
     const caDir = process.env.CA_DIR ?? '/opt/ee-ca';
+    // SANs are re-derived from the CSR and re-emitted by the issuer; the CA
+    // itself never copies extensions out of an untrusted CSR.
+    const sans = await this.policy.extractSubjectAltNames(req.csrPem);
     let signed: Awaited<ReturnType<typeof this.sign>>;
 
     try {
-      signed = await this.sign(req.csrPem, req.profile, caDir);
+      signed = await this.sign(req.csrPem, req.profile, caDir, sans);
     } catch (err) {
       await this.audit(AuditEvent.REQUEST_REJECTED, {
         requestId: id,
@@ -362,6 +368,78 @@ export class CertificateService {
     return cert;
   }
 
+  // ─── Lifecycle (F4) ──────────────────────────────────────────────────────────
+
+  /** List/filter certificates: by entity, by expiry window, and revoked inclusion. */
+  async listCertificates(opts: { entityId?: string; expiringInDays?: number; includeRevoked?: boolean }) {
+    const where: Record<string, unknown> = {};
+    if (opts.entityId) where['request'] = { entityId: opts.entityId };
+
+    if (opts.expiringInDays != null) {
+      const now = new Date();
+      const horizon = new Date(now.getTime() + opts.expiringInDays * 86400000);
+      where['isRevoked'] = false;
+      where['validTo'] = { gt: now, lte: horizon };
+    } else if (opts.includeRevoked === false) {
+      where['isRevoked'] = false;
+    }
+
+    const certs = await this.prisma.certificate.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      select: {
+        serial: true, subject: true, issuer: true, fingerprint: true,
+        validFrom: true, validTo: true, isRevoked: true, revokedAt: true,
+        hsmManaged: true, hsmKeyLabel: true, createdAt: true,
+        request: { select: { entityId: true } },
+      },
+    });
+
+    const now = new Date();
+    return certs.map((c) => {
+      const { request, ...rest } = c;
+      const status = c.isRevoked ? 'REVOKED' : now > c.validTo ? 'EXPIRED' : 'GOOD';
+      return { ...rest, entityId: request?.entityId ?? null, status };
+    });
+  }
+
+  /**
+   * Renew an entity's managed certificate: issue a fresh HSM-managed cert first
+   * (so there's no coverage gap), then optionally revoke the previously-active
+   * managed cert(s) — i.e. rotation. Issuance enforces cert:issue + APPROVED.
+   */
+  async renewManaged(entityId: string, userId: string, revokePrevious = false) {
+    const previous = revokePrevious
+      ? await this.prisma.certificate.findMany({
+          where: { hsmManaged: true, isRevoked: false, request: { entityId } },
+          select: { serial: true },
+        })
+      : [];
+
+    const renewed = await this.issueManagedCertificate(entityId, userId);
+
+    const revoked: string[] = [];
+    for (const p of previous) {
+      if (p.serial === renewed.serial) continue;
+      try {
+        await this.revokeCertificate(p.serial, 'superseded-by-renewal', userId);
+        revoked.push(p.serial);
+      } catch { /* best-effort */ }
+    }
+
+    await this.audit(AuditEvent.CERTIFICATE_RENEWED, {
+      entityId,
+      userId,
+      detail: {
+        serial: renewed.serial,
+        supersededSerials: revoked,
+        rotated: revoked.length > 0,
+      },
+    });
+
+    return { renewed, revokedPrevious: revoked };
+  }
+
   async revokeCertificate(serial: string, revokedBy: string, userId?: string) {
     const cert = await this.prisma.certificate.findUnique({ where: { serial } });
     if (!cert) {
@@ -448,13 +526,18 @@ export class CertificateService {
     return false;
   }
 
-  private async sign(csrPem: string, profile: string, caDir: string) {
+  private async sign(csrPem: string, profile: string, caDir: string, sans: string[] = []) {
     const work = mkdtempSync(join(tmpdir(), 'sign-'));
     const csrPath = join(work, 'req.csr.pem');
     const certPath = join(work, 'cert.pem');
     writeFileSync(csrPath, csrPem, { mode: 0o600 });
 
     try {
+      // Extensions come from a generated file so the issuer can add the
+      // revocation/issuer pointers and any validated SANs on top of the static
+      // profile. Falls back to the profile in openssl.cnf if generation fails.
+      const extFile = this.buildExtensionFile(profile, caDir, work, sans);
+
       await execFile(
         'openssl',
         [
@@ -464,6 +547,7 @@ export class CertificateService {
           '-out', certPath,
           '-batch',
           '-notext',
+          ...(extFile ? ['-extfile', extFile] : []),
           '-extensions', profile,
         ],
         { timeout: 15000 },
@@ -502,6 +586,82 @@ export class CertificateService {
     } finally {
       try { rmSync(work, { recursive: true, force: true }); } catch { /* ignore */ }
     }
+  }
+
+  /**
+   * Compose the extension section used for this issuance:
+   *
+   *   base profile from openssl.cnf
+   *   + crlDistributionPoints / authorityInfoAccess  (so relying parties can
+   *     actually find the CRL we publish at /v1/crl.pem and the issuer chain —
+   *     without these a standard client never checks revocation)
+   *   + subjectAltName, re-emitted from the CSR after validation
+   *
+   * Returns the file path, or null when there is nothing to add and the static
+   * profile can be used as-is.
+   */
+  private buildExtensionFile(
+    profile: string,
+    caDir: string,
+    workDir: string,
+    sans: string[],
+  ): string | null {
+    const base = process.env.PKI_BASE_URL?.replace(/\/+$/, '');
+    const crlUrl = process.env.PKI_CRL_URL ?? (base ? `${base}/v1/crl.pem` : undefined);
+    const issuersUrl = process.env.PKI_CA_ISSUERS_URL ?? (base ? `${base}/v1/ca/chain` : undefined);
+    const ocspUrl = process.env.PKI_OCSP_URL; // only when a responder is actually deployed
+
+    const additions: string[] = [];
+    if (crlUrl) additions.push(`crlDistributionPoints = URI:${crlUrl}`);
+
+    const aia: string[] = [];
+    if (ocspUrl) aia.push(`OCSP;URI:${ocspUrl}`);
+    if (issuersUrl) aia.push(`caIssuers;URI:${issuersUrl}`);
+    if (aia.length) additions.push(`authorityInfoAccess = ${aia.join(',')}`);
+
+    if (sans.length) additions.push(`subjectAltName = ${sans.join(', ')}`);
+
+    if (additions.length === 0) return null;
+
+    let baseLines: string[];
+    try {
+      baseLines = this.readProfileSection(`${caDir}/openssl.cnf`, profile);
+    } catch (err) {
+      this.logger.warn(
+        `Could not read profile "${profile}" from openssl.cnf (${(err as Error).message}); ` +
+          'issuing with the static profile — no CRL/AIA/SAN extensions.',
+      );
+      return null;
+    }
+
+    // Drop any base line whose key we are about to set, so the section has no
+    // duplicate keys.
+    const overridden = new Set(additions.map((line) => line.split('=')[0].trim()));
+    const kept = baseLines.filter((line) => {
+      const key = line.split('=')[0].trim();
+      return !overridden.has(key);
+    });
+
+    const extPath = join(workDir, 'ext.cnf');
+    writeFileSync(extPath, `[ ${profile} ]\n${[...kept, ...additions].join('\n')}\n`, { mode: 0o600 });
+    return extPath;
+  }
+
+  /** Read the body lines of a `[ section ]` from an OpenSSL config file. */
+  private readProfileSection(configPath: string, section: string): string[] {
+    const content = readFileSync(configPath, 'utf8');
+    const lines = content.split('\n');
+    const start = lines.findIndex((l) => l.trim().replace(/\s+/g, '') === `[${section}]`);
+    if (start === -1) throw new Error(`section [${section}] not found`);
+
+    const body: string[] = [];
+    for (const line of lines.slice(start + 1)) {
+      if (/^\s*\[/.test(line)) break;
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      body.push(trimmed);
+    }
+    return body;
   }
 
   private async audit(

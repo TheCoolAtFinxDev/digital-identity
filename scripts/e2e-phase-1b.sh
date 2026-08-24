@@ -447,16 +447,20 @@ curl -s -X POST "$BASE_URL/v1/users/$CM2_ID/roles" \
   -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
   -d "{\"roleId\":\"$R_CERT_MANAGER\",\"scope\":\"ENTITY\",\"scopeId\":\"$ORG_ID\"}" > /dev/null
 CM2_TOKEN=$(do_login "cm2_${SUFFIX}" "M8CM2Pass!${SUFFIX}")
+# The requests themselves are raised by the GLOBAL cert manager. PermissionGuard
+# resolves @RequirePermission at GLOBAL scope only, so an ENTITY-scoped role
+# holder cannot pass the cert:request gate — scoped assignments take effect in
+# the service-resolved cert:issue check, which is exactly what N3 exercises.
 # cm2 can issue for ORG_ID
 N3_ORG_REQ=$(curl -s -X POST "$BASE_URL/v1/cert-requests" \
-  -H "Authorization: Bearer $CM2_TOKEN" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $CM_TOKEN" -H "Content-Type: application/json" \
   -d "{\"csrPem\":$ORG_CSR_JSON,\"entityId\":\"$ORG_ID\"}" | get_field id)
 N3_ORG_CODE=$(http_code -s -X POST "$BASE_URL/v1/cert-requests/$N3_ORG_REQ/issue" \
   -H "Authorization: Bearer $CM2_TOKEN")
 assert_http "N3  ENTITY-scoped: issue for assigned entity → 201" "201" "$N3_ORG_CODE"
 # cm2 cannot issue for PERSON_ID (different entity)
 N3_PERSON_REQ=$(curl -s -X POST "$BASE_URL/v1/cert-requests" \
-  -H "Authorization: Bearer $CM2_TOKEN" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $CM_TOKEN" -H "Content-Type: application/json" \
   -d "{\"csrPem\":$PERSON_CSR_JSON,\"entityId\":\"$PERSON_ID\"}" | get_field id)
 N3_PERSON_CODE=$(http_code -s -X POST "$BASE_URL/v1/cert-requests/$N3_PERSON_REQ/issue" \
   -H "Authorization: Bearer $CM2_TOKEN")

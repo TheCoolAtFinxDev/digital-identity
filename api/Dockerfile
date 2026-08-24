@@ -17,7 +17,9 @@ RUN apt-get update && apt-get install -y \
   && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
      > /etc/apt/sources.list.d/nodesource.list \
   && apt-get update && apt-get install -y nodejs \
-  && npm i -g npm@latest \
+  # Pinned to the npm major that supports Node 20 — `npm@latest` now resolves to
+  # npm 12, which requires Node >= 22 and fails the build.
+  && npm i -g npm@10 \
   && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # pkcs11-proxy client module from the HSM image (built there from source)

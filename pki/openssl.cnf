@@ -44,6 +44,14 @@ keyUsage = critical, keyCertSign, cRLSign
 subjectKeyIdentifier = hash
 authorityKeyIdentifier = keyid:always,issuer
 
+# NOTE: at issuance the API composes a temporary extension section from the
+# profile below plus, when configured:
+#   crlDistributionPoints  <- PKI_BASE_URL / PKI_CRL_URL
+#   authorityInfoAccess    <- PKI_BASE_URL / PKI_CA_ISSUERS_URL / PKI_OCSP_URL
+#   subjectAltName         <- validated SANs re-emitted from the CSR
+# copy_extensions stays `none` above: CSRs are untrusted input and must never be
+# able to inject their own extensions (e.g. basicConstraints CA:true).
+
 [ usr_entity_cert ]
 basicConstraints = critical, CA:false
 keyUsage = critical, digitalSignature, keyEncipherment, nonRepudiation

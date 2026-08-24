@@ -36,9 +36,22 @@ services:
       PKCS11_MODULE: "/usr/local/lib/libpkcs11-proxy.so"
       HSM_TOKEN_LABEL: "${HSM_TOKEN_LABEL:-econet-ca}"
       HSM_USER_PIN: "${HSM_USER_PIN:-change_me_user_pin}"
+      # ── PKI distribution points (F6) ──
+      # Baked into every certificate issued from here, so relying parties can
+      # find the CRL and the issuer chain. MUST be the externally reachable URL.
+      PKI_BASE_URL: "${PKI_BASE_URL:-http://localhost:8080}"
+      # ── Document stamping (F5) ──
+      # Where the QR code on a stamped document points. Must resolve for whoever
+      # scans the page, not just for containers on this network.
+      PUBLIC_VERIFY_BASE_URL: "${PUBLIC_VERIFY_BASE_URL:-http://localhost:8080}"
+      STAMP_STORAGE_PATH: "/app/storage/stamps"
+      # ── Certificate expiry surveillance (F4) ──
+      CERT_EXPIRY_WARNING_DAYS: "${CERT_EXPIRY_WARNING_DAYS:-30}"
+      CERT_EXPIRY_SWEEP_HOURS: "${CERT_EXPIRY_SWEEP_HOURS:-24}"
     volumes:
       - ./pki:/opt/ee-ca:z
       - ./storage/evidence:/app/storage/evidence:z
+      - ./storage/stamps:/app/storage/stamps:z
     ports:
       - "8080:8080"
     restart: unless-stopped

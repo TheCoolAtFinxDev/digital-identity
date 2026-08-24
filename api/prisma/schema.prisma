@@ -112,6 +112,12 @@ enum AuditEvent {
   SERVICE_ACCOUNT_CREATED
   SERVICE_ACCOUNT_DEACTIVATED
   SERVICE_TOKEN_ISSUED
+  // ── F4 certificate lifecycle ──────────────────────────
+  CERTIFICATE_RENEWED
+  CERTIFICATE_EXPIRING
+  // ── F5 document stamping ──────────────────────────────
+  DOCUMENT_STAMPED
+  DOCUMENT_VERIFIED
 }
 
 // ─── Service Accounts (F3 machine-to-machine access) ──────────────────────────
@@ -161,8 +167,43 @@ model Signature {
   signedById   String?  // operator/service that invoked signing
   createdAt    DateTime @default(now())
 
+  stampedDocument StampedDocument?
+
   @@index([entityId])
   @@index([certSerial])
+}
+
+// ─── Stamped Document (F5 digital stamping) ───────────────────────────────────
+//
+// One row per stamped artifact. It ties together the three things a relying
+// party needs to trust a document: the hash of the exact bytes that were signed,
+// the signature record (F1) that proves who signed them, and the certificate
+// serial whose revocation/expiry status decides whether that proof still holds.
+
+model StampedDocument {
+  id             String        @id @default(uuid())
+  verificationId String        @unique // short, QR/human-friendly identifier
+  entityId       String
+  entity         Entity        @relation(fields: [entityId], references: [id])
+  objectId       String? // optional link to the ObjectRecord this artifact represents
+  object         ObjectRecord? @relation(fields: [objectId], references: [id])
+  signatureId    String        @unique
+  signature      Signature     @relation(fields: [signatureId], references: [id])
+  certSerial     String
+  documentName   String
+  mimeType       String
+  sizeBytes      Int
+  originalHash   String // hex SHA-256 of the bytes that were signed (the uploaded document)
+  stampedHash    String? // hex SHA-256 of the produced stamped file, when one was rendered
+  visibleStamp   Boolean       @default(false) // true when a visible seal + QR was rendered onto the file
+  pageCount      Int?
+  storagePath    String
+  stampedById    String? // operator/service that requested the stamp
+  createdAt      DateTime      @default(now())
+
+  @@index([entityId])
+  @@index([certSerial])
+  @@index([createdAt(sort: Desc)])
 }
 
 // ─── Entity ───────────────────────────────────────────────────────────────────
@@ -184,6 +225,7 @@ model Entity {
   subjectRelationships EntityRelationship[] @relation("SubjectEntity")
   objectRelationships  EntityRelationship[] @relation("ObjectEntity")
   signatures           Signature[]
+  stampedDocuments     StampedDocument[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -223,6 +265,8 @@ model ObjectRecord {
   entity     Entity?    @relation(fields: [entityId], references: [id])
   metadata   Json?
   createdAt  DateTime   @default(now())
+
+  stampedDocuments StampedDocument[]
 }
 
 enum ObjectType {

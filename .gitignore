@@ -12,6 +12,10 @@ yarn-error.log*
 storage/evidence/**
 !storage/evidence/.gitkeep
 
+# Stamped artifacts are customer documents — never commit them.
+storage/stamps/**
+!storage/stamps/.gitkeep
+
 # Generated development CA material and OpenSSL runtime state.
 pki/private/
 pki/newcerts/

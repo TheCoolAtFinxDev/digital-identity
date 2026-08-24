@@ -27,7 +27,10 @@ async function bootstrap() {
     .addTag('certificates', 'Certificate request lifecycle')
     .addTag('entities', 'Legal entity registration and KYC')
     .addTag('objects', 'Digital object identity records')
-    .addTag('verification', 'Public certificate verification (no auth required)')
+    .addTag('signing', 'HSM-backed signing and signature verification')
+    .addTag('stamping', 'Document stamping — visible seal, QR code and signature')
+    .addTag('trust', 'Trust anchors, CRL and certificate status (public)')
+    .addTag('verification', 'Public certificate and document verification (no auth required)')
     .addTag('audit', 'Audit log query (operator use)')
     .addBearerAuth()
     .build();

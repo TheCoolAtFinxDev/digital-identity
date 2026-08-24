@@ -10,8 +10,18 @@ All non-public routes still require a valid JWT through `JwtAuthGuard`. Routes l
 |---|---|---|
 | `GET` | `/health` | Liveness check |
 | `POST` | `/v1/auth/login` | Login throttle still applies |
-| `GET` | `/verify?s=...` | Public verification |
-| `GET` | `/v1/verify/:serial` | Public verification |
+| `POST` | `/v1/auth/token` | Service-account client-credentials grant |
+| `GET` | `/verify?s=...` | Public certificate verification |
+| `GET` | `/v1/verify/:serial` | Public certificate verification |
+| `GET` | `/v1/verify/document/:verificationId` | Public document verification (QR target; HTML or JSON) |
+| `POST` | `/v1/verify/document` | Public document verification by upload (tamper check) |
+| `GET` | `/v1/ca/chain` | Trust anchor download |
+| `GET` | `/v1/crl.pem` | Certificate revocation list |
+| `GET` | `/v1/certificates/:serial/status` | Certificate status (GOOD / REVOKED / EXPIRED / UNKNOWN) |
+
+The two document-verification routes are the only public routes that accept a
+body. They deliberately keep the global 10 req/60 s per-IP throttle (the trust
+routes skip it) and cap uploads at 20 MB.
 
 ## Authenticated Identity
 
@@ -28,12 +38,46 @@ All non-public routes still require a valid JWT through `JwtAuthGuard`. Routes l
 | `GET` | `/v1/cert-requests` | `cert:read` |
 | `POST` | `/v1/cert-requests` | `cert:request` |
 | `GET` | `/v1/cert-requests/:id` | `cert:read` |
+| `GET` | `/v1/certificates` | `cert:read` |
 | `GET` | `/v1/certificates/:serial` | `cert:read` |
 | `PATCH` | `/v1/certificates/:serial/revoke` | `cert:revoke` |
 | `POST` | `/v1/cert-requests/:id/issue` | Service-scoped `cert:issue` |
 | `POST` | `/v1/cert-requests/managed` | Service-scoped `cert:issue` |
+| `POST` | `/v1/certificates/renew` | Service-scoped `cert:issue` |
 
-`cert:issue` is resolved inside `CertificateService` because issuance may be GLOBAL or scoped to the target entity/organisation.
+`cert:issue` is resolved inside `CertificateService` because issuance may be GLOBAL or scoped to the target entity/organisation. `POST /v1/certificates/renew` carries no `@RequirePermission` for the same reason: it issues through `issueManagedCertificate`, which performs the scoped check against the target entity and re-applies the APPROVED precondition. Rotation additionally revokes the superseded certificate — that revocation is performed by the service on the issuer's behalf and is not separately gated by `cert:revoke`.
+
+## Signing And Stamping
+
+| Method | Route | Permission |
+|---|---|---|
+| `POST` | `/v1/signatures` | `signature:create` |
+| `POST` | `/v1/signatures/verify` | `signature:read` |
+| `GET` | `/v1/signatures/entity/:entityId` | `signature:read` |
+| `POST` | `/v1/stamps` | `stamp:create` |
+| `GET` | `/v1/stamps` | `stamp:read` |
+| `GET` | `/v1/stamps/:id` | `stamp:read` |
+| `GET` | `/v1/stamps/:id/download` | `stamp:read` |
+| `GET` | `/v1/stamps/:id/qr.png` | `stamp:read` |
+
+`stamp:create` and `stamp:read` are seeded in migration `20260803000020_document_stamping` (ADMIN and CERT_MANAGER get both; ISO_OPERATOR and AUDITOR get read).
+
+Note on `signature:*` and `object:*`: two migrations dated `20260531000015` each claimed the same two permission ids, so whichever applied second inserted nothing and its routes returned 403 for every role. Migration `20260803000019_fix_object_permissions` repairs both directions by code.
+
+## Service Accounts
+
+| Method | Route | Permission |
+|---|---|---|
+| `POST` | `/v1/service-accounts` | `serviceaccount:create` |
+| `GET` | `/v1/service-accounts` | `serviceaccount:read` |
+| `GET` | `/v1/service-accounts/:id` | `serviceaccount:read` |
+| `PATCH` | `/v1/service-accounts/:id/deactivate` | `serviceaccount:create` |
+| `POST` | `/v1/service-accounts/:id/rotate-secret` | `serviceaccount:create` |
+| `POST` | `/v1/service-accounts/:id/roles` | `serviceaccount:create` |
+| `GET` | `/v1/service-accounts/:id/roles` | `serviceaccount:read` |
+| `DELETE` | `/v1/service-accounts/:id/roles/:assignmentId` | `serviceaccount:create` |
+
+Service principals resolve permissions through the same role model as users; `PermissionGuard` accepts either principal type.
 
 ## Entities And Profiles
 
@@ -108,6 +152,26 @@ Workflow rules such as creator-only submission and 4-eyes separation are enforce
 | `GET` | `/v1/roles/:id` | `user:read` |
 | `GET` | `/v1/permissions` | `user:read` |
 | `GET` | `/v1/audit-logs` | `audit:read` |
+
+## Scope Resolution — Important Limitation
+
+`PermissionGuard` resolves `@RequirePermission(...)` at **GLOBAL scope only**: it
+calls `IamService.hasPermission(userId, code)` with no scope filter, so only
+`GLOBAL` role assignments satisfy a guarded route. An `ENTITY`- or
+`ORGANISATION`-scoped assignment therefore has no effect on any guarded route —
+it only matters where a service resolves the scope itself against a known target,
+which today is `cert:issue` in `CertificateService.resolveIssuePermission()`.
+
+Practical consequence: a user holding only `ENTITY`-scoped `CERT_MANAGER` cannot
+call `POST /v1/cert-requests` (gated on `cert:request`), even for the entity they
+are scoped to. `scripts/e2e-phase-1b.sh` raises those requests with the GLOBAL
+cert manager and uses the scoped user only for the issuance step, which is what
+N3 actually tests.
+
+Making the guard scope-aware (deriving a target id from the route/body and
+passing it to `hasPermission`) would let scoped assignments work everywhere. That
+is a deliberate widening of the authorization surface across every guarded route
+and has not been done — it needs a decision, not a patch.
 
 ## Regression Checklist
 

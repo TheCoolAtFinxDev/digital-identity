@@ -18,6 +18,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { RolesModule } from './roles/roles.module';
 import { ServiceAccountsModule } from './service-accounts/service-accounts.module';
 import { SigningModule } from './signing/signing.module';
+import { StampingModule } from './stamping/stamping.module';
 import { TrustModule } from './trust/trust.module';
 import { UsersModule } from './users/users.module';
 import { VerificationModule } from './verification/verification.module';
@@ -42,6 +43,7 @@ import { AuditModule } from './audit/audit.module';
     RolesModule,
     ServiceAccountsModule,
     SigningModule,
+    StampingModule,
     TrustModule,
   ],
   controllers: [AppController],

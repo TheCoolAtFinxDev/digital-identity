@@ -4,6 +4,10 @@ This document describes the Phase 1-B backend end-to-end test: what it covers,
 how to run it, and the manual command sequence behind each step (for debugging
 or portal-integration reference in M9/M10).
 
+Everything built after Phase 1-B — signing, trust distribution, service accounts,
+certificate lifecycle, document stamping, certificate extensions — is covered by
+`scripts/e2e-features.sh` and documented in [feature-blocks.md](./feature-blocks.md).
+
 ## Running the automated test
 
 ```bash
@@ -27,6 +31,7 @@ Requirements on the host: `bash`, `curl`, `openssl`, `python3`.
 | **Negative N1** | Unapproved entity issuance → `422`, request stays `NEW` |
 | **Negative N2** | User without `cert:issue` → `403` |
 | **Negative N3** | `ENTITY`-scoped `cert:issue` for Entity A cannot issue for Entity B |
+| — | *N3 setup note: the requests are raised by the GLOBAL cert manager. `PermissionGuard` only honours GLOBAL assignments, so a scoped role holder cannot pass the `cert:request` gate — see [rbac-permission-matrix.md](./rbac-permission-matrix.md#scope-resolution--important-limitation).* |
 | **Negative N4** | Evidence upload after `SUBMITTED` → `400` |
 | **Negative N5** | Evidence delete after `SUBMITTED` → `400` |
 | **Negative N6** | Self-relationship (subject == object) → `400` |

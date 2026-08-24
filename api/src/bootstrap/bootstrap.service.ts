@@ -11,6 +11,8 @@ const ADMIN_ROLE_CODE = 'ADMIN';
 export const EVIDENCE_STORAGE_ROOT =
   process.env.EVIDENCE_STORAGE_PATH ?? '/app/storage/evidence';
 
+export const STAMP_STORAGE_ROOT = process.env.STAMP_STORAGE_PATH ?? '/app/storage/stamps';
+
 @Injectable()
 export class BootstrapService implements OnApplicationBootstrap {
   private readonly logger = new Logger(BootstrapService.name);
@@ -18,19 +20,20 @@ export class BootstrapService implements OnApplicationBootstrap {
   constructor(private readonly prisma: PrismaService) {}
 
   async onApplicationBootstrap() {
-    await this.checkEvidenceStorage();
+    await this.checkStorage(EVIDENCE_STORAGE_ROOT, 'Evidence', 'Evidence upload/download');
+    await this.checkStorage(STAMP_STORAGE_ROOT, 'Stamp', 'Document stamping');
     await this.seedAdminUser();
   }
 
-  private async checkEvidenceStorage() {
+  private async checkStorage(root: string, label: string, feature: string) {
     try {
-      await mkdir(EVIDENCE_STORAGE_ROOT, { recursive: true });
-      await access(EVIDENCE_STORAGE_ROOT, constants.W_OK);
-      this.logger.log(`Evidence storage ready: ${EVIDENCE_STORAGE_ROOT}`);
+      await mkdir(root, { recursive: true });
+      await access(root, constants.W_OK);
+      this.logger.log(`${label} storage ready: ${root}`);
     } catch (err: any) {
       this.logger.warn(
-        `Evidence storage not writable at ${EVIDENCE_STORAGE_ROOT}: ${err.message}. ` +
-          `Evidence upload/download will fail until the mount is available.`,
+        `${label} storage not writable at ${root}: ${err.message}. ` +
+          `${feature} will fail until the mount is available.`,
       );
     }
   }
