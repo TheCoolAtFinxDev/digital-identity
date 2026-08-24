@@ -15,6 +15,10 @@
 set -uo pipefail
 
 BASE_URL="${1:-http://localhost:8080}"
+# Admin credentials come from the environment so the suite runs against any
+# deployment (CI stack, staging) and not only a default-password dev box.
+ADMIN_USER="${AUTH_USERNAME:-admin}"
+ADMIN_PASS="${AUTH_PASSWORD:-change_me_admin_password}"
 SUFFIX="$(date +%s | tail -c 5)"   # unique run tag
 
 PASS=0; FAIL=0
@@ -113,7 +117,7 @@ banner "SCENARIO A: Organisation lifecycle"
 
 # A1 — Admin login
 step "A1  Admin login"
-ADMIN_TOKEN=$(do_login admin change_me_admin_password)
+ADMIN_TOKEN=$(do_login "$ADMIN_USER" "$ADMIN_PASS")
 assert_nonempty "A1  Admin JWT obtained" "$ADMIN_TOKEN"
 
 # A2 — Create users

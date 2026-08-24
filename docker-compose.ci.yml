@@ -1,0 +1,118 @@
+# ─── CI stack (standalone) ────────────────────────────────────────────────────
+# A throwaway copy of the platform that runs alongside the developer stack on
+# the same host. Driven by scripts/ci.sh.
+#
+# This is deliberately a FULL definition rather than an overlay on
+# docker-compose.yml: podman-compose merges list-valued keys by appending, so an
+# overlay inherits the base file's `ports` and `volumes` instead of replacing
+# them — which means binding :8080 twice and mounting the developer's live PKI
+# directory into the test stack. Keep this file in step with docker-compose.yml
+# when services change.
+#
+# Everything here is disposable: containers are ci-* prefixed, state lives in
+# ./.ci, and volumes are dropped by `down -v`.
+
+services:
+  ca-bootstrap:
+    image: public.ecr.aws/docker/library/ubuntu:22.04
+    container_name: ci-di-ca-bootstrap
+    working_dir: /opt/ee-ca
+    volumes:
+      - ./.ci/pki:/opt/ee-ca:z
+    command: ["/bin/bash", "-c", "apt-get update -qq && apt-get install -y -qq openssl && chmod +x /opt/ee-ca/init-ca.sh && /opt/ee-ca/init-ca.sh"]
+    restart: "no"
+
+  postgres:
+    image: public.ecr.aws/docker/library/postgres:16
+    container_name: ci-di-postgres
+    environment:
+      POSTGRES_USER: certsvc
+      POSTGRES_PASSWORD: ci_postgres_password
+      POSTGRES_DB: certsvc
+    volumes:
+      - ci_pgdata:/var/lib/postgresql/data
+    restart: "no"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U certsvc"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  softhsm:
+    build:
+      context: ./hsm
+      dockerfile: Dockerfile
+    # Pinned tag: api/Dockerfile pulls the pkcs11-proxy client from
+    # `localhost/digital-identity_softhsm:latest` in a FROM stage. Without this
+    # the image would be tagged after the CI project name and that FROM would
+    # miss on a clean runner.
+    image: localhost/digital-identity_softhsm:latest
+    container_name: ci-di-softhsm
+    environment:
+      HSM_TOKEN_LABEL: "econet-ca"
+      HSM_SO_PIN: "ci_so_pin"
+      HSM_USER_PIN: "ci_user_pin"
+      PKCS11_DAEMON_SOCKET: "tcp://0.0.0.0:5657"
+    volumes:
+      - ci_softhsm_tokens:/var/lib/softhsm/tokens
+    expose:
+      - "5657"
+    restart: "no"
+    healthcheck:
+      test: ["CMD-SHELL", "PKCS11_PROXY_SOCKET=tcp://127.0.0.1:5657 pkcs11-tool --module /usr/local/lib/libpkcs11-proxy.so --list-slots >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  certsvc:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    image: localhost/di-ci_certsvc:latest
+    container_name: ci-di-certsvc
+    depends_on:
+      ca-bootstrap:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      softhsm:
+        condition: service_healthy
+    environment:
+      PORT: "8080"
+      CA_DIR: "/opt/ee-ca"
+      DATABASE_URL: "postgresql://certsvc:ci_postgres_password@ci-di-postgres:5432/certsvc?schema=public"
+      JWT_SECRET: "ci_jwt_secret_not_for_deployment_but_long_enough_to_be_valid"
+      JWT_EXPIRES_IN: "24h"
+      AUTH_USERNAME: "${CI_ADMIN_USER:-admin}"
+      AUTH_PASSWORD: "${CI_ADMIN_PASSWORD:-ci_admin_password_not_for_deployment}"
+      # e2e-features.sh walks one case through create -> review -> approve as admin.
+      FOUR_EYES_ADMIN_OVERRIDE: "true"
+      PKCS11_PROXY_SOCKET: "tcp://ci-di-softhsm:5657"
+      PKCS11_MODULE: "/usr/local/lib/libpkcs11-proxy.so"
+      HSM_TOKEN_LABEL: "econet-ca"
+      HSM_USER_PIN: "ci_user_pin"
+      # The suites assert on baked-in certificate extensions and QR targets, so
+      # these must match the URL the tests actually call.
+      PKI_BASE_URL: "http://localhost:${CI_API_PORT:-18080}"
+      PUBLIC_VERIFY_BASE_URL: "http://localhost:${CI_API_PORT:-18080}"
+      STAMP_STORAGE_PATH: "/app/storage/stamps"
+      # Keep runs deterministic — the sweep is covered by unit tests instead.
+      CERT_EXPIRY_SWEEP_HOURS: "0"
+    volumes:
+      - ./.ci/pki:/opt/ee-ca:z
+      - ./.ci/storage/evidence:/app/storage/evidence:z
+      - ./.ci/storage/stamps:/app/storage/stamps:z
+    ports:
+      - "${CI_API_PORT:-18080}:8080"
+    restart: "no"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+
+volumes:
+  ci_pgdata:
+  ci_softhsm_tokens:

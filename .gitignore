@@ -25,3 +25,4 @@ pki/csr/
 pki/index.txt*
 pki/serial*
 pki/crlnumber*
+.ci/

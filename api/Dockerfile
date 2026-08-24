@@ -28,8 +28,10 @@ RUN ldconfig
 
 WORKDIR /app
 
-COPY package.json ./
-RUN npm install
+# npm ci (not install) so an image build resolves exactly the tree the lock file
+# pins — the same tree CI tests. Requires package-lock.json to be committed.
+COPY package.json package-lock.json ./
+RUN npm ci
 
 COPY prisma ./prisma
 RUN npx prisma generate

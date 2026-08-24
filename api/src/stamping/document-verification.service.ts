@@ -23,6 +23,46 @@ export type DocumentVerificationStatus =
   | 'CERTIFICATE_EXPIRED'
   | 'UNVERIFIABLE_COPY';
 
+/**
+ * The verdict, as a pure function of the four checks. Order matters: altered
+ * bytes outrank everything (there is nothing left to trust), an un-rechecked
+ * copy must not be reported as either good or bad, and a revoked or expired
+ * certificate still means the content itself is intact.
+ */
+export function resolveDocumentStatus(checks: {
+  hashMatches: boolean;
+  signatureValid: boolean | null; // null = could not be re-checked
+  isRevoked: boolean;
+  isExpired: boolean;
+}): DocumentVerificationStatus {
+  if (!checks.hashMatches) return 'TAMPERED';
+  if (checks.signatureValid === null) return 'UNVERIFIABLE_COPY';
+  if (!checks.signatureValid) return 'SIGNATURE_INVALID';
+  if (checks.isRevoked) return 'CERTIFICATE_REVOKED';
+  if (checks.isExpired) return 'CERTIFICATE_EXPIRED';
+  return 'VALID';
+}
+
+/** Plain-language wording for each verdict, written for the person checking. */
+export function explainDocumentStatus(status: DocumentVerificationStatus): string {
+  switch (status) {
+    case 'VALID':
+      return 'Authentic. The document is unchanged since it was stamped and the issuing certificate is currently valid.';
+    case 'TAMPERED':
+      return 'The document has been altered since it was stamped — its content no longer matches the stamped record.';
+    case 'SIGNATURE_INVALID':
+      return 'The recorded signature does not verify against the issuing certificate.';
+    case 'CERTIFICATE_REVOKED':
+      return 'The document is unchanged, but the certificate that stamped it has been revoked.';
+    case 'CERTIFICATE_EXPIRED':
+      return 'The document is unchanged, but the certificate that stamped it has expired.';
+    case 'NO_MATCHING_STAMP':
+      return 'No stamp on record covers these bytes.';
+    case 'UNVERIFIABLE_COPY':
+      return 'The stamp is on record but no copy was available to re-verify. Upload the document to POST /v1/verify/document for an authoritative answer.';
+  }
+}
+
 @Injectable()
 export class DocumentVerificationService {
   constructor(
@@ -152,17 +192,12 @@ export class DocumentVerificationService {
     const isExpired = now > cert.validTo;
     const isRevoked = cert.isRevoked;
 
-    const status: DocumentVerificationStatus = !checks.hashMatches
-      ? 'TAMPERED'
-      : checks.signatureValid === null
-      ? 'UNVERIFIABLE_COPY'
-      : !checks.signatureValid
-      ? 'SIGNATURE_INVALID'
-      : isRevoked
-      ? 'CERTIFICATE_REVOKED'
-      : isExpired
-      ? 'CERTIFICATE_EXPIRED'
-      : 'VALID';
+    const status = resolveDocumentStatus({
+      hashMatches: checks.hashMatches,
+      signatureValid: checks.signatureValid,
+      isRevoked,
+      isExpired,
+    });
 
     const valid = status === 'VALID';
 
@@ -178,7 +213,7 @@ export class DocumentVerificationService {
     return {
       valid,
       status,
-      message: this.explain(status),
+      message: explainDocumentStatus(status),
       verificationId: stamp.verificationId,
       document: {
         name: stamp.documentName,
@@ -221,25 +256,6 @@ export class DocumentVerificationService {
       },
       checkedAt: now,
     };
-  }
-
-  private explain(status: DocumentVerificationStatus): string {
-    switch (status) {
-      case 'VALID':
-        return 'Authentic. The document is unchanged since it was stamped and the issuing certificate is currently valid.';
-      case 'TAMPERED':
-        return 'The document has been altered since it was stamped — its content no longer matches the stamped record.';
-      case 'SIGNATURE_INVALID':
-        return 'The recorded signature does not verify against the issuing certificate.';
-      case 'CERTIFICATE_REVOKED':
-        return 'The document is unchanged, but the certificate that stamped it has been revoked.';
-      case 'CERTIFICATE_EXPIRED':
-        return 'The document is unchanged, but the certificate that stamped it has expired.';
-      case 'NO_MATCHING_STAMP':
-        return 'No stamp on record covers these bytes.';
-      case 'UNVERIFIABLE_COPY':
-        return 'The stamp is on record but no copy was available to re-verify. Upload the document to POST /v1/verify/document for an authoritative answer.';
-    }
   }
 
   private async audit(entityId: string | null, status: string, detail: Record<string, unknown>) {
