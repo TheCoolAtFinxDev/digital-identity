@@ -28,7 +28,7 @@ if [ ! -f "$DIR/certs/intermediate.cert.pem" ]; then
     -out $DIR/csr/intermediate.csr.pem
 
   # Self-signed intermediate CA for development only.
-  # In production this CSR should be signed by an offline root or EJBCA.
+  # In production this CSR must be signed by the offline root (see pki-operations.md).
   openssl x509 -req -sha256 -days 1825 \
     -in  $DIR/csr/intermediate.csr.pem \
     -signkey $DIR/private/intermediate.key.pem \
