@@ -26,3 +26,6 @@ pki/index.txt*
 pki/serial*
 pki/crlnumber*
 .ci/
+
+# Angular CLI build cache
+portal/.angular/

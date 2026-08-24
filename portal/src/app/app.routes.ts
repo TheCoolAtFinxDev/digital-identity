@@ -37,6 +37,15 @@ export const routes: Routes = [
   { path: 'objects/new', loadComponent: () => import('./pages/objects/new/create-object.component').then(m => m.CreateObjectComponent), canActivate: [authGuard] },
   { path: 'objects/:id', loadComponent: () => import('./pages/objects/detail/object-detail.component').then(m => m.ObjectDetailComponent), canActivate: [authGuard] },
 
+  // ── Staff daily operations ───────────────────────────────────────────────
+  // A separate surface from identity operations: a staff member signs, asks for
+  // signatures, and requests their department stamp. They never see the KYB queue.
+  { path: 'staff', redirectTo: '/staff/documents', pathMatch: 'full' },
+  { path: 'staff/documents', loadComponent: () => import('./staff/documents/documents-list.component').then(m => m.DocumentsListComponent), canActivate: [authGuard] },
+  { path: 'staff/documents/:id', loadComponent: () => import('./staff/documents/document-detail.component').then(m => m.DocumentDetailComponent), canActivate: [authGuard] },
+  { path: 'staff/awaiting', loadComponent: () => import('./staff/approvals/approval-queue.component').then(m => m.ApprovalQueueComponent), canActivate: [authGuard] },
+  { path: 'staff/stamps/:id', loadComponent: () => import('./staff/stamps/stamp-request.component').then(m => m.StampRequestComponent), canActivate: [authGuard] },
+
   // Audit + Verify
   { path: 'audit', loadComponent: () => import('./pages/audit/audit-log.component').then(m => m.AuditLogComponent), canActivate: [authGuard] },
   { path: 'verify', loadComponent: () => import('./pages/verify/verify.component').then(m => m.VerifyComponent) },
