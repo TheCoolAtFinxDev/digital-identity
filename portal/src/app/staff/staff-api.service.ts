@@ -1,6 +1,6 @@
 import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Observable, delay, of, throwError } from 'rxjs';
+import { Observable, delay, of, switchMap, throwError } from 'rxjs';
 import {
   ApprovalChainPreview,
   DecisionResult,
@@ -35,6 +35,7 @@ export abstract class StaffApi {
   abstract decide(id: string, decision: 'APPROVE' | 'REJECT', note?: string): Observable<DecisionResult>;
 
   abstract document(id: string): Observable<DocumentDetail>;
+  abstract download(id: string): Observable<Blob>;
   abstract recall(id: string, reason: string): Observable<DocumentDetail>;
 }
 
@@ -65,6 +66,9 @@ export class HttpStaffApi extends StaffApi {
   }
 
   document(id: string) { return this.http.get<DocumentDetail>(`/v1/documents/${id}`); }
+  download(id: string) {
+    return this.http.get(`/v1/documents/${id}/download`, { responseType: 'blob' });
+  }
   recall(id: string, reason: string) {
     return this.http.patch<DocumentDetail>(`/v1/documents/${id}/recall`, { reason });
   }
@@ -95,6 +99,8 @@ const daysAgo = (d: number) => new Date(Date.now() - d * 86_400_000).toISOString
 export class FixtureStaffApi extends StaffApi {
   private requestState = new Map<string, StampRequest>();
   private recalled = new Set<string>();
+
+  constructor(private readonly http: HttpClient) { super(); }
 
   awaitingMe(): Observable<WorkItem[]> {
     return of([
@@ -232,8 +238,12 @@ export class FixtureStaffApi extends StaffApi {
   withdrawStampRequest(id: string) { return this.transition(id, 'DRAFT'); }
 
   decide(id: string, decision: 'APPROVE' | 'REJECT', note?: string): Observable<DecisionResult> {
-    const current = this.requestState.get(id);
-    if (!current) return throwError(() => new Error(`Unknown stamp request ${id}`));
+    // Queue items can be opened before their detail screen has seeded the
+    // in-memory request map. Treat such an item as awaiting review: appearing
+    // in awaitingMe() is itself the fixture's source of truth that the request
+    // exists and is actionable.
+    const current = this.requestState.get(id) ?? this.build(id, 'AWAITING_REVIEW');
+    this.requestState.set(id, current);
 
     if (decision === 'REJECT') {
       this.requestState.set(id, this.build(id, 'REJECTED', note));
@@ -282,6 +292,23 @@ export class FixtureStaffApi extends StaffApi {
       recall: isRecalled ? { at: new Date().toISOString(), by: THABO.displayName, reason: 'Wrong VAT rate applied' } : null,
       supersededBy: null,
     }).pipe(delay(LAG));
+  }
+
+  /**
+   * The staff workflow is fixture-backed, but the demo stack contains genuine
+   * HSM-signed stamped artifacts created by the feature regression. Download
+   * the newest visible PDF so this action demonstrates a real artifact rather
+   * than manufacturing a client-side placeholder.
+   */
+  download(_id: string): Observable<Blob> {
+    type StampRow = { id: string; mimeType: string; visibleStamp: boolean };
+    return this.http.get<{ data: StampRow[] }>('/v1/stamps?limit=50').pipe(
+      switchMap((page) => {
+        const stamp = page.data.find((row) => row.visibleStamp && row.mimeType === 'application/pdf');
+        if (!stamp) return throwError(() => new Error('No stamped PDF is available in the demo register'));
+        return this.http.get(`/v1/stamps/${stamp.id}/download`, { responseType: 'blob' });
+      }),
+    );
   }
 
   recall(id: string, _reason: string): Observable<DocumentDetail> {

@@ -1,5 +1,6 @@
 import { Component, OnInit } from '@angular/core';
 import { NgClass, NgFor, NgIf } from '@angular/common';
+import { RouterLink } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -14,7 +15,7 @@ import { isStale, sealLabel, waitingAge } from '../staff.utils';
   selector: 'app-approval-queue',
   standalone: true,
   imports: [
-    NgIf, NgFor, NgClass, FormsModule, MatButtonModule, MatIconModule,
+    NgIf, NgFor, NgClass, RouterLink, FormsModule, MatButtonModule, MatIconModule,
     MatFormFieldModule, MatInputModule, MatProgressSpinnerModule,
   ],
   template: `
@@ -83,7 +84,7 @@ import { isStale, sealLabel, waitingAge } from '../staff.utils';
               <button mat-raised-button color="primary" [disabled]="deciding" (click)="decide('APPROVE')">{{ approveLabel() }}</button>
               <button mat-button style="color:#c62828" [disabled]="deciding" (click)="decide('REJECT')">Reject</button>
               <span class="spacer"></span>
-              <button mat-button color="primary">Open document</button>
+              <a mat-button color="primary" [routerLink]="['/staff/documents', current.documentId]">Open document</a>
             </div>
             <div class="muted" style="margin-top:14px">{{ footnote() }}</div>
           </div>

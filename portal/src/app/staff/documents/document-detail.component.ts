@@ -94,7 +94,10 @@ import { StaffBadgeComponent } from '../staff-badge.component';
 
           <div class="panel">
             <div style="display:flex;flex-direction:column;gap:8px">
-              <button mat-raised-button color="primary">Download stamped PDF</button>
+              <button mat-raised-button color="primary" [disabled]="downloading" (click)="download()">
+                {{ downloading ? 'Preparing download…' : 'Download stamped PDF' }}
+              </button>
+              <div *ngIf="downloadError" style="color:#c62828;font-size:12px">{{ downloadError }}</div>
               <button mat-stroked-button>Check this document</button>
               <ng-container *ngIf="doc.canRecall || doc.canReplace">
                 <div style="height:1px;background:rgba(0,0,0,0.12);margin:6px 0"></div>
@@ -134,6 +137,8 @@ export class DocumentDetailComponent implements OnInit {
   loading = true;
   confirming = false;
   working = false;
+  downloading = false;
+  downloadError = '';
   reason = '';
 
   constructor(private readonly api: StaffApi, private readonly route: ActivatedRoute) {}
@@ -164,6 +169,27 @@ export class DocumentDetailComponent implements OnInit {
   startRecall() {
     this.confirming = true;
     this.reason = '';
+  }
+
+  download() {
+    if (!this.doc || this.downloading) return;
+    this.downloading = true;
+    this.downloadError = '';
+    this.api.download(this.doc.id).subscribe({
+      next: (blob) => {
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = this.doc?.name ?? 'stamped-document.pdf';
+        link.click();
+        URL.revokeObjectURL(url);
+        this.downloading = false;
+      },
+      error: () => {
+        this.downloadError = 'No stamped PDF is available. Run the feature demo data script first.';
+        this.downloading = false;
+      },
+    });
   }
 
   confirmRecall() {

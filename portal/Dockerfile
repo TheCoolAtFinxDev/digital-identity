@@ -2,6 +2,10 @@ FROM public.ecr.aws/docker/library/node:20-alpine AS build
 WORKDIR /app
 COPY package.json ./
 RUN npm install
+# Optional cache key for source-only rebuilds. This preserves the expensive
+# dependency layer while allowing callers to invalidate COPY/build explicitly:
+#   podman build --build-arg PORTAL_SOURCE_VERSION=<value> ...
+ARG PORTAL_SOURCE_VERSION=local
 COPY . .
 RUN npm run build
 
