@@ -61,6 +61,147 @@ model Certificate {
   createdAt   DateTime           @default(now())
 }
 
+
+// ─── Staff documents (Sprint 4) ───────────────────────────────────────────────
+//
+// The document a staff member owns, before and after anything is done to it.
+// Distinct from StampedDocument, which is the artifact produced when a seal is
+// applied: one Document may end up with a StampedDocument hanging off its
+// approved stamp request, and it still exists if it never does.
+
+model Document {
+  id          String           @id @default(uuid())
+  name        String
+  mimeType    String
+  sizeBytes   Int
+  pageCount   Int?
+  contentHash String // hex SHA-256 of the uploaded bytes
+  storagePath String
+  ownerId     String
+  owner       User             @relation("DocumentOwner", fields: [ownerId], references: [id])
+  standing    DocumentStanding @default(DRAFT)
+
+  // Recall withdraws ONE document without revoking the key that signed it.
+  // A CHECK constraint refuses a recall that does not say when, by whom and why.
+  recalledAt   DateTime?
+  recalledById String?
+  recalledBy   User?     @relation("DocumentRecaller", fields: [recalledById], references: [id])
+  recallReason String?
+
+  // The corrected version that replaces this one, so anyone verifying the old
+  // document is pointed at the current one instead of just being told "no".
+  supersededById String?    @unique
+  supersededBy   Document?  @relation("DocumentSupersede", fields: [supersededById], references: [id])
+  supersedes     Document?  @relation("DocumentSupersede")
+
+  signatures    DocumentSignature[]
+  stampRequests StampRequest[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([ownerId])
+  @@index([standing])
+}
+
+enum DocumentStanding {
+  DRAFT
+  SIGNED
+  STAMPED
+  SUPERSEDED
+  RECALLED
+}
+
+// One person's obligation to sign one document. Covers signing your own
+// document (requestedById null) and being asked to sign someone else's.
+model DocumentSignature {
+  id         String          @id @default(uuid())
+  documentId String
+  document   Document        @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  signerId   String
+  signer     User            @relation("SignatureSigner", fields: [signerId], references: [id])
+  status     SignatureStatus @default(AWAITING_SIGNATURE)
+
+  // The non-repudiation record, once they actually sign.
+  signatureId String?    @unique
+  signature   Signature? @relation(fields: [signatureId], references: [id])
+  certSerial  String?
+
+  requestedById String?
+  requestedBy   User?   @relation("SignatureRequester", fields: [requestedById], references: [id])
+  /// Why they declined, or a note left with the signature.
+  note          String?
+
+  requestedAt DateTime  @default(now())
+  signedAt    DateTime?
+
+  @@unique([documentId, signerId])
+  @@index([signerId, status])
+}
+
+enum SignatureStatus {
+  AWAITING_SIGNATURE
+  SIGNED
+  DECLINED
+}
+
+// ─── Stamp requests (Sprint 5) ────────────────────────────────────────────────
+//
+// Replaces stamping on the spot. Shaped like VerificationCase, which already
+// works: a distinct actor recorded per decision, and a reason kept on rejection.
+
+model StampRequest {
+  id          String  @id @default(uuid())
+  documentId  String
+  document    Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  orgUnitId   String
+  orgUnit     OrgUnit @relation(fields: [orgUnitId], references: [id])
+  requesterId String
+  requester   User    @relation("StampRequester", fields: [requesterId], references: [id])
+
+  // Resolved from the reporting line at submit time and then held, so someone
+  // moving department mid-approval cannot silently change who may decide.
+  reviewerId String?
+  reviewer   User?   @relation("StampReviewer", fields: [reviewerId], references: [id])
+  approverId String?
+  approver   User?   @relation("StampApprover", fields: [approverId], references: [id])
+
+  status StampRequestStatus @default(DRAFT)
+
+  submittedAt     DateTime?
+  reviewedAt      DateTime?
+  reviewedById    String?
+  reviewNote      String?
+  approvedAt      DateTime?
+  approvedById    String?
+  approvalNote    String?
+  rejectedAt      DateTime?
+  rejectedById    String?
+  rejectionReason String?
+  withdrawnAt     DateTime?
+
+  stampedDocumentId String?          @unique
+  stampedDocument   StampedDocument? @relation(fields: [stampedDocumentId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([documentId])
+  @@index([orgUnitId, status])
+  @@index([requesterId])
+  @@index([reviewerId, status])
+  @@index([approverId, status])
+}
+
+enum StampRequestStatus {
+  DRAFT
+  AWAITING_REVIEW
+  AWAITING_APPROVAL
+  STAMPED
+  REJECTED
+  WITHDRAWN
+}
+
 // ─── Audit Log ────────────────────────────────────────────────────────────────
 
 model AuditLog {
@@ -130,6 +271,18 @@ enum AuditEvent {
   ORG_UNIT_DEACTIVATED
   ORG_UNIT_HEAD_CHANGED
   USER_PLACEMENT_CHANGED
+
+  // ── Sprints 4-5: the staff document and stamp-request workflow ──
+  DOCUMENT_UPLOADED
+  SIGNATURE_REQUESTED
+  SIGNATURE_DECLINED
+  DOCUMENT_RECALLED
+  DOCUMENT_REPLACED
+  STAMP_REQUESTED
+  STAMP_REQUEST_REVIEWED
+  STAMP_REQUEST_APPROVED
+  STAMP_REQUEST_REJECTED
+  STAMP_REQUEST_WITHDRAWN
 }
 
 // ─── Service Accounts (F3 machine-to-machine access) ──────────────────────────
@@ -168,8 +321,12 @@ model ServiceAccountRole {
 
 model Signature {
   id           String   @id @default(uuid())
-  entityId     String
-  entity       Entity   @relation(fields: [entityId], references: [id])
+  // Held by a legal entity OR by an organisational unit — a department stamp is
+  // signed with the department's key. A CHECK constraint refuses both.
+  entityId     String?
+  entity       Entity?  @relation(fields: [entityId], references: [id])
+  orgUnitId    String?
+  orgUnit      OrgUnit? @relation(fields: [orgUnitId], references: [id])
   certSerial   String   // serial of the cert whose key signed
   hashAlg      String   @default("SHA-256")
   payloadHash  String   // hex SHA-256 of the signed content
@@ -180,8 +337,10 @@ model Signature {
   createdAt    DateTime @default(now())
 
   stampedDocument StampedDocument?
+  documentSignature DocumentSignature?
 
   @@index([entityId])
+  @@index([orgUnitId])
   @@index([certSerial])
 }
 
@@ -195,8 +354,12 @@ model Signature {
 model StampedDocument {
   id             String        @id @default(uuid())
   verificationId String        @unique // short, QR/human-friendly identifier
-  entityId       String
-  entity         Entity        @relation(fields: [entityId], references: [id])
+  // A stamp is released by an entity OR by an organisational unit; a department
+  // seal belongs to the department. A CHECK constraint refuses both.
+  entityId       String?
+  entity         Entity?       @relation(fields: [entityId], references: [id])
+  orgUnitId      String?
+  orgUnit        OrgUnit?      @relation(fields: [orgUnitId], references: [id])
   objectId       String? // optional link to the ObjectRecord this artifact represents
   object         ObjectRecord? @relation(fields: [objectId], references: [id])
   signatureId    String        @unique
@@ -213,7 +376,10 @@ model StampedDocument {
   stampedById    String? // operator/service that requested the stamp
   createdAt      DateTime      @default(now())
 
+  stampRequest StampRequest?
+
   @@index([entityId])
+  @@index([orgUnitId])
   @@index([certSerial])
   @@index([createdAt(sort: Desc)])
 }
@@ -324,6 +490,9 @@ model OrgUnit {
   members User[] @relation("OrgUnitMembers")
   // The unit's own signing certificates — a department stamp is signed with these.
   certificateRequests CertificateRequest[]
+  signatures          Signature[]
+  stampedDocuments    StampedDocument[]
+  stampRequests       StampRequest[]
 
   @@index([entityId])
   @@index([parentId])
@@ -440,6 +609,13 @@ model User {
 
   roleAssignments UserRoleAssignment[]
   unitsHeaded     OrgUnit[]            @relation("OrgUnitHead")
+  documents          Document[]          @relation("DocumentOwner")
+  documentsRecalled  Document[]          @relation("DocumentRecaller")
+  signaturesOwed     DocumentSignature[] @relation("SignatureSigner")
+  signaturesAsked    DocumentSignature[] @relation("SignatureRequester")
+  stampRequestsRaised   StampRequest[]   @relation("StampRequester")
+  stampRequestsToReview StampRequest[]   @relation("StampReviewer")
+  stampRequestsToApprove StampRequest[]  @relation("StampApprover")
   casesCreated    VerificationCase[]   @relation("CaseCreatedBy")
   casesReviewed   VerificationCase[]   @relation("CaseReviewedBy")
   casesApproved   VerificationCase[]   @relation("CaseApprovedBy")

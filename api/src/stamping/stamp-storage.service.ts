@@ -30,6 +30,27 @@ export class StampStorageService {
     return join(STAMP_STORAGE_ROOT, stampId);
   }
 
+  /** Uploaded staff documents live alongside stamped artifacts, keyed by id. */
+  documentDir(documentId: string): string {
+    return join(STAMP_STORAGE_ROOT, 'documents', documentId);
+  }
+
+  /** Writes an uploaded document and returns where it landed. */
+  async writeDocument(documentId: string, filename: string, buffer: Buffer): Promise<string> {
+    const dir = this.documentDir(documentId);
+    const filePath = join(dir, this.safeFilename(filename));
+    try {
+      await mkdir(dir, { recursive: true });
+      await writeFile(filePath, buffer);
+    } catch (err: any) {
+      this.logger.error(`Failed to write document: ${err.message}`);
+      throw new InternalServerErrorException(
+        'Document storage is not available. Contact the system administrator.',
+      );
+    }
+    return filePath;
+  }
+
   /** Writes the stamped artifact and returns where it landed. */
   async writeStamped(stampId: string, filename: string, buffer: Buffer): Promise<string> {
     const filePath = join(this.stampDir(stampId), this.safeFilename(filename));

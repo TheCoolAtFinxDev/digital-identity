@@ -11,5 +11,6 @@ import { StampingService } from './stamping.service';
   imports: [SigningModule],
   controllers: [StampingController, DocumentVerificationController],
   providers: [StampingService, DocumentVerificationService, PdfStampService, StampStorageService],
+  exports: [PdfStampService, StampStorageService],
 })
 export class StampingModule {}

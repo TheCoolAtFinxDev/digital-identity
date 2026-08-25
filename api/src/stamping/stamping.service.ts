@@ -166,12 +166,15 @@ export class StampingService {
         orderBy: { createdAt: 'desc' },
         skip: offset,
         take: limit,
-        include: { entity: { select: { name: true } } },
+        include: {
+          entity: { select: { name: true } },
+          orgUnit: { select: { name: true } },
+        },
       }),
     ]);
 
     return {
-      data: rows.map((r) => this.toResponse(r, r.entity.name)),
+      data: rows.map((r) => this.toResponse(r, r.orgUnit?.name ?? r.entity?.name)),
       total,
       limit,
       offset,
@@ -181,10 +184,13 @@ export class StampingService {
   async getStamp(id: string) {
     const row = await this.prisma.stampedDocument.findUnique({
       where: { id },
-      include: { entity: { select: { name: true } } },
+      include: {
+        entity: { select: { name: true } },
+        orgUnit: { select: { name: true } },
+      },
     });
     if (!row) throw new NotFoundException(`Stamp ${id} not found`);
-    return this.toResponse(row, row.entity.name);
+    return this.toResponse(row, row.orgUnit?.name ?? row.entity?.name);
   }
 
   /** The stamped artifact itself — the file that carries the seal and QR. */
@@ -225,7 +231,8 @@ export class StampingService {
     row: {
       id: string;
       verificationId: string;
-      entityId: string;
+      entityId: string | null;
+      orgUnitId?: string | null;
       objectId: string | null;
       signatureId: string;
       certSerial: string;

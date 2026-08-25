@@ -122,6 +122,13 @@ else
   FAILED="$FAILED unit-keys"
 fi
 
+stage "Staff workflow suite (Sprints 4-5)"
+if bash scripts/e2e-staff-workflow.sh "$BASE" 2>&1 | tee "$LOGDIR/e2e-staff-workflow.log" | tail -20; then
+  printf "${GRN}  staff workflow suite passed${NC}\n"
+else
+  FAILED="$FAILED staff-workflow"
+fi
+
 stage "Feature suite (F1-F6)"
 if bash scripts/e2e-features.sh "$BASE" 2>&1 | tee "$LOGDIR/e2e-features.log" | tail -25; then
   printf "${GRN}  feature suite passed${NC}\n"

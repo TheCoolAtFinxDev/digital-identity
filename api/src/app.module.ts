@@ -13,6 +13,8 @@ import { EntityRelationshipsModule } from './entity-relationships/entity-relatio
 import { IamModule } from './iam/iam.module';
 import { VerificationCasesModule } from './verification-cases/verification-cases.module';
 import { PermissionGuard } from './iam/permission.guard';
+import { DocumentsModule } from './documents/documents.module';
+import { StampRequestsModule } from './stamp-requests/stamp-requests.module';
 import { ObjectModule } from './object/object.module';
 import { OrgUnitsModule } from './org-units/org-units.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -27,6 +29,8 @@ import { AuditModule } from './audit/audit.module';
 
 @Module({
   imports: [
+    DocumentsModule,
+    StampRequestsModule,
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 10 }]),
     PrismaModule,
     IamModule,

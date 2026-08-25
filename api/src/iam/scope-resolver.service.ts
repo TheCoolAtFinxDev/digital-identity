@@ -103,11 +103,15 @@ export class ScopeResolverService {
       }
 
       case 'STAMP': {
+        // A stamp is released either by a legal entity or by an organisational
+        // unit, so it resolves through whichever holder it actually has.
         const doc = await this.prisma.stampedDocument.findUnique({
           where: { id },
-          select: { entityId: true },
+          select: { entityId: true, orgUnitId: true },
         });
-        return doc ? this.forEntity(doc.entityId) : [];
+        if (!doc) return [];
+        if (doc.orgUnitId) return this.forOrgUnit(doc.orgUnitId);
+        return doc.entityId ? this.forEntity(doc.entityId) : [];
       }
 
       default:

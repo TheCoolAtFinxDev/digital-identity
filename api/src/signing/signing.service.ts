@@ -87,6 +87,71 @@ export class SigningService {
     return { record, cert, payloadHash };
   }
 
+  /**
+   * Sign raw bytes with an organisational UNIT's HSM key.
+   *
+   * The department stamp path (WP-5.3). Same mechanics as signBuffer, but the
+   * key belongs to the unit, so the signature record names the unit as its
+   * holder rather than a legal entity — that is what keeps the stamp verifying
+   * after the head who released it has left.
+   */
+  async signBufferForUnit(orgUnitId: string, content: Buffer, documentName: string | null, userId?: string) {
+    const cert = await this.activeUnitSigningCertificate(orgUnitId);
+    const payloadHash = createHash('sha256').update(content).digest('hex');
+    const signatureB64 = await this.hsmSign(content, cert.hsmKeyId!);
+
+    const record = await this.prisma.signature.create({
+      data: {
+        id: randomUUID(),
+        orgUnitId,
+        certSerial: cert.serial,
+        hashAlg: 'SHA-256',
+        payloadHash,
+        signatureB64,
+        mechanism: MECHANISM,
+        documentName,
+        signedById: userId ?? null,
+      },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        event: AuditEvent.DOCUMENT_SIGNED,
+        userId: userId ?? null,
+        detail: {
+          signatureId: record.id, certSerial: cert.serial, payloadHash, documentName,
+          holder: 'ORG_UNIT', orgUnitId,
+        },
+      },
+    });
+
+    return { record, cert, payloadHash };
+  }
+
+  /**
+   * The unit's current key: newest, not revoked, not expired. The same rule
+   * CertificateService.orgUnitSigningKey reports, applied here at signing time
+   * — a key that was rotated away stays valid for what it already signed, but
+   * must not be picked up for anything new.
+   */
+  private async activeUnitSigningCertificate(orgUnitId: string) {
+    const cert = await this.prisma.certificate.findFirst({
+      where: { hsmManaged: true, isRevoked: false, request: { orgUnitId } },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!cert || !cert.hsmKeyId) {
+      throw new UnprocessableEntityException(
+        'This unit has no active signing key. Issue one before releasing its seal.',
+      );
+    }
+    if (new Date() > cert.validTo) {
+      throw new UnprocessableEntityException(
+        `The unit's signing certificate ${cert.serial} has expired. Rotate it before stamping.`,
+      );
+    }
+    return cert;
+  }
+
   /** Latest active, HSM-managed certificate for an entity — tells us which key to use. */
   private async activeSigningCertificate(entityId: string) {
     const cert = await this.prisma.certificate.findFirst({

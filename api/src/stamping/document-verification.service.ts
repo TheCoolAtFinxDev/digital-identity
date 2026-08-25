@@ -63,6 +63,11 @@ export function explainDocumentStatus(status: DocumentVerificationStatus): strin
   }
 }
 
+/** Names as a relying party should see them — never a bare user id. */
+function person(u: { id: string; username: string; displayName: string | null } | null | undefined) {
+  return u ? { id: u.id, displayName: u.displayName || u.username } : null;
+}
+
 @Injectable()
 export class DocumentVerificationService {
   constructor(
@@ -150,8 +155,26 @@ export class DocumentVerificationService {
       where: { verificationId },
       include: {
         entity: { select: { id: true, name: true, country: true, entityType: true, status: true } },
+        orgUnit: {
+          select: {
+            id: true, name: true, unitType: true, code: true,
+            entity: { select: { id: true, name: true, country: true, entityType: true, status: true } },
+          },
+        },
         signature: true,
         object: { select: { id: true, objectType: true, reference: true } },
+        // WP-5.4: a checker should see who released the seal, not only that a
+        // signature verifies.
+        stampRequest: {
+          select: {
+            id: true,
+            requester: { select: { id: true, username: true, displayName: true } },
+            reviewedAt: true,
+            reviewer: { select: { id: true, username: true, displayName: true } },
+            approvedAt: true,
+            approver: { select: { id: true, username: true, displayName: true } },
+          },
+        },
       },
     });
     if (!stamp) throw new NotFoundException(`No stamped document with verification ID ${verificationId}`);
@@ -168,8 +191,26 @@ export class DocumentVerificationService {
       orderBy: { createdAt: 'desc' },
       include: {
         entity: { select: { id: true, name: true, country: true, entityType: true, status: true } },
+        orgUnit: {
+          select: {
+            id: true, name: true, unitType: true, code: true,
+            entity: { select: { id: true, name: true, country: true, entityType: true, status: true } },
+          },
+        },
         signature: true,
         object: { select: { id: true, objectType: true, reference: true } },
+        // WP-5.4: a checker should see who released the seal, not only that a
+        // signature verifies.
+        stampRequest: {
+          select: {
+            id: true,
+            requester: { select: { id: true, username: true, displayName: true } },
+            reviewedAt: true,
+            reviewer: { select: { id: true, username: true, displayName: true } },
+            approvedAt: true,
+            approver: { select: { id: true, username: true, displayName: true } },
+          },
+        },
       },
     });
     if (!stamp) return null;
@@ -229,13 +270,46 @@ export class DocumentVerificationService {
           ? {}
           : { storedCopyIntact: checks.registerIntact }),
       },
-      issuer: {
-        entityId: stamp.entity.id,
-        name: stamp.entity.name,
-        country: stamp.entity.country,
-        entityType: stamp.entity.entityType,
-        entityStatus: stamp.entity.status,
-      },
+      // Who this document came from. A department seal is released by a unit,
+      // and the organisation behind that unit is what gives it legal standing —
+      // so both are reported, and the caller is not left inferring one from a
+      // subject DN.
+      issuer: stamp.orgUnit
+        ? {
+            holder: 'ORG_UNIT' as const,
+            orgUnitId: stamp.orgUnit.id,
+            name: stamp.orgUnit.name,
+            unitType: stamp.orgUnit.unitType,
+            unitCode: stamp.orgUnit.code,
+            entityId: stamp.orgUnit.entity.id,
+            organisation: stamp.orgUnit.entity.name,
+            country: stamp.orgUnit.entity.country,
+            entityType: stamp.orgUnit.entity.entityType,
+            entityStatus: stamp.orgUnit.entity.status,
+          }
+        : stamp.entity
+          ? {
+              holder: 'ENTITY' as const,
+              entityId: stamp.entity.id,
+              name: stamp.entity.name,
+              country: stamp.entity.country,
+              entityType: stamp.entity.entityType,
+              entityStatus: stamp.entity.status,
+            }
+          : null,
+
+      // WP-5.4: the authority behind the seal. Absent for stamps applied
+      // directly through the machine API, which have no approval chain.
+      releasedBy: stamp.stampRequest
+        ? {
+            requestId: stamp.stampRequest.id,
+            requestedBy: person(stamp.stampRequest.requester),
+            reviewedBy: person(stamp.stampRequest.reviewer),
+            reviewedAt: stamp.stampRequest.reviewedAt,
+            approvedBy: person(stamp.stampRequest.approver),
+            approvedAt: stamp.stampRequest.approvedAt,
+          }
+        : null,
       object: stamp.object
         ? { id: stamp.object.id, objectType: stamp.object.objectType, reference: stamp.object.reference }
         : null,

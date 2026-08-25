@@ -34,10 +34,11 @@ interface NavItem { label: string; link: string; perms?: string[]; }
 export class AppComponent implements OnInit {
   nav: NavItem[] = [
     { label: 'Dashboard', link: '/dashboard' },
-    // Staff daily operations. Gated on stamp:read for now; once people are on
-    // the org chart this should key off having a unit rather than a permission.
-    { label: 'My documents', link: '/staff/documents', perms: ['stamp:read'] },
-    { label: 'Awaiting me', link: '/staff/awaiting', perms: ['stamp:read'] },
+    // Staff daily operations. Every employee holds the Staff role, which carries
+    // document:read — so this now keys off the permission that actually gates
+    // the endpoints behind these screens.
+    { label: 'My documents', link: '/staff/documents', perms: ['document:read'] },
+    { label: 'Awaiting me', link: '/staff/awaiting', perms: ['document:read'] },
     { label: 'Entities', link: '/entities', perms: ['entity:read'] },
     { label: 'Cases', link: '/verification-cases', perms: ['entity:read'] },
     { label: 'Relationships', link: '/relationships', perms: ['relationship:read'] },
