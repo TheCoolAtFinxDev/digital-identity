@@ -71,6 +71,31 @@ export class CertificateController {
     return this.svc.issueForOrgUnit(dto.orgUnitId, req.user.userId);
   }
 
+  @ApiOperation({
+    summary: "Rotate an organisational unit's signing key",
+    description:
+      "Issues a fresh key and RETIRES the previous one WITHOUT revoking it, so every document already stamped under it keeps verifying until it expires. Revocation is for a compromised key, where invalidating what it signed is the point.",
+  })
+  @ApiCreatedResponse()
+  @HttpCode(201)
+  @Post('cert-requests/org-unit/rotate')
+  rotateOrgUnitKey(@Body() dto: IssueOrgUnitCertDto, @Request() req: any) {
+    return this.svc.rotateOrgUnitKey(dto.orgUnitId, req.user.userId);
+  }
+
+  @ApiOperation({
+    summary: "The key a unit's stamp is signed with, and the keys it used to use",
+    description:
+      'Reports the current key, the retired-but-still-valid ones, and why the unit cannot stamp if it cannot.',
+  })
+  @ApiOkResponse()
+  @RequirePermission('cert:read')
+  @ScopedTo({ target: 'ORG_UNIT', from: 'param', name: 'id' })
+  @Get('org-units/:id/signing-key')
+  orgUnitSigningKey(@Param('id') id: string) {
+    return this.svc.orgUnitSigningKey(id);
+  }
+
   @ApiOperation({ summary: 'Issue a certificate for a NEW request' })
   @ApiCreatedResponse({ type: CertificateResponseDto })
   @HttpCode(201)

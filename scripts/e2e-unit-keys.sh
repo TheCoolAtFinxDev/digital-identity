@@ -188,6 +188,44 @@ assert_eq "a deactivated unit is refused a key" "422" \
 assert_eq "a unit that does not exist is a 404, not a 500" "404" \
   "$(api_code POST /v1/cert-requests/org-unit '{"orgUnitId":"00000000-0000-0000-0000-000000000000"}')"
 
+# ── Rotation retires; only compromise revokes ───────────────────────────────
+head2 "Rotating a unit key does not invalidate what it already stamped"
+
+KEY_BEFORE=$(api GET "/v1/org-units/$FIN_ID/signing-key")
+assert_eq "the current signing key is the one just issued" "$SERIAL" "$(jq_get "$KEY_BEFORE" current.serial)"
+assert_eq "the unit can stamp" "true" "$(jq_get "$KEY_BEFORE" canStamp)"
+
+ROTATED=$(api POST /v1/cert-requests/org-unit/rotate "{\"orgUnitId\":\"$FIN_ID\"}")
+NEW_SERIAL=$(jq_get "$ROTATED" rotated.serial)
+[ -n "$NEW_SERIAL" ] && ok "rotation issued a new key ($NEW_SERIAL)" || bad "rotation issued a new key" "$ROTATED"
+
+[ "$NEW_SERIAL" != "$SERIAL" ] && ok "the new key is a different certificate" || bad "the new key is a different certificate"
+assert_contains "rotation reports the previous key as retained, not revoked" "$SERIAL" "$(jq_get "$ROTATED" retainedPrevious)"
+
+KEY_AFTER=$(api GET "/v1/org-units/$FIN_ID/signing-key")
+assert_eq "the new key becomes current" "$NEW_SERIAL" "$(jq_get "$KEY_AFTER" current.serial)"
+assert_contains "the previous key is listed as retired" "$SERIAL" "$(jq_get "$KEY_AFTER" retired)"
+
+# This is the assertion the pilot depends on. If a rotated key went REVOKED,
+# every department stamp issued under it would report CERTIFICATE_REVOKED, and a
+# year of correct stamps would be invalidated by routine key hygiene.
+assert_eq "THE POINT: the rotated-away key is still GOOD, so its stamps still verify" "GOOD" \
+  "$(jq_get "$(curl -s "$BASE/v1/certificates/$SERIAL/status")" status)"
+
+# Revocation remains available, and means something different.
+api PATCH "/v1/certificates/$SERIAL/revoke" '{"revokedBy":"compromise-drill"}' >/dev/null
+assert_eq "an explicitly revoked key does report REVOKED" "REVOKED" \
+  "$(jq_get "$(curl -s "$BASE/v1/certificates/$SERIAL/status")" status)"
+
+KEY_REVOKED=$(api GET "/v1/org-units/$FIN_ID/signing-key")
+assert_eq "a revoked key leaves the retired list" "[]" "$(jq_get "$KEY_REVOKED" retired)"
+assert_contains "and is reported as revoked or expired" "$SERIAL" "$(jq_get "$KEY_REVOKED" revokedOrExpired)"
+assert_eq "the unit can still stamp on its current key" "true" "$(jq_get "$KEY_REVOKED" canStamp)"
+
+NO_KEY=$(api GET "/v1/org-units/$DEAD_ID/signing-key")
+assert_eq "a unit with no key cannot stamp" "false" "$(jq_get "$NO_KEY" canStamp)"
+assert_contains "and says why" "never been issued a signing key" "$(jq_get "$NO_KEY" blockers)"
+
 # ── Scoped issuance follows the same chart rule ──────────────────────────────
 head2 "Scoped cert:issue walks the org chart"
 

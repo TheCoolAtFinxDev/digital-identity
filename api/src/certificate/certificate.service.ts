@@ -443,6 +443,106 @@ export class CertificateService {
     return { ...certificate, orgUnitId, unitName: unit.name, unitType: unit.unitType };
   }
 
+  /**
+   * The key a unit's stamp is signed with right now, plus the keys it used to be
+   * signed with.
+   *
+   * "Current" is the newest certificate the unit holds that is neither revoked
+   * nor expired — the same rule the signing service applies to entities, stated
+   * once here so WP-5.3 does not have to reinvent it when it applies the stamp.
+   */
+  async orgUnitSigningKey(orgUnitId: string) {
+    const unit = await this.prisma.orgUnit.findUnique({
+      where: { id: orgUnitId },
+      select: { id: true, name: true, unitType: true, code: true, isActive: true },
+    });
+    if (!unit) throw new NotFoundException(`Org unit ${orgUnitId} not found`);
+
+    const certs = await this.prisma.certificate.findMany({
+      where: { hsmManaged: true, request: { orgUnitId } },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        serial: true, subject: true, validFrom: true, validTo: true,
+        isRevoked: true, revokedAt: true, hsmKeyLabel: true, createdAt: true,
+      },
+    });
+
+    const now = new Date();
+    const usable = certs.filter((c) => !c.isRevoked && c.validTo > now);
+    const [current, ...supersededActive] = usable;
+
+    const blockers: string[] = [];
+    if (!unit.isActive) blockers.push('The unit is deactivated');
+    if (!current) {
+      blockers.push(
+        certs.length
+          ? 'Every key this unit holds is revoked or expired'
+          : 'The unit has never been issued a signing key',
+      );
+    }
+
+    return {
+      orgUnitId: unit.id,
+      unitName: unit.name,
+      unitType: unit.unitType,
+      code: unit.code,
+      current: current ?? null,
+      /**
+       * Still valid, no longer used for new stamps. These are the reason
+       * rotation does not revoke: every document signed under them keeps
+       * verifying until they expire on their own.
+       */
+      retired: supersededActive,
+      revokedOrExpired: certs.filter((c) => c.isRevoked || c.validTo <= now),
+      canStamp: blockers.length === 0,
+      blockers,
+    };
+  }
+
+  /**
+   * Rotate a unit's signing key: issue a new one and RETIRE the old one without
+   * revoking it.
+   *
+   * This is the difference between rotation and revocation, and getting it wrong
+   * would break the pilot. Revoking the previous key makes every document it
+   * ever signed report CERTIFICATE_REVOKED — a year of correctly-issued
+   * department stamps would go invalid the moment someone did routine key
+   * hygiene. So a rotated key stays valid until it expires on its own; it simply
+   * stops being the newest, and new stamps use the new key.
+   *
+   * Revocation stays available and is the right answer for exactly one case: the
+   * key is compromised. Then invalidating what it signed is the point, because a
+   * compromised key cannot distinguish a genuine stamp from a forged one.
+   */
+  async rotateOrgUnitKey(orgUnitId: string, userId: string) {
+    const before = await this.prisma.certificate.findMany({
+      where: { hsmManaged: true, isRevoked: false, request: { orgUnitId } },
+      select: { serial: true, validTo: true },
+    });
+
+    const rotated = await this.issueForOrgUnit(orgUnitId, userId);
+
+    const retained = before
+      .filter((c) => c.serial !== rotated.serial && c.validTo > new Date())
+      .map((c) => c.serial);
+
+    await this.audit(AuditEvent.CERTIFICATE_RENEWED, {
+      entityId: undefined,
+      userId,
+      detail: {
+        holder: 'ORG_UNIT',
+        orgUnitId,
+        serial: rotated.serial,
+        // Named "retained", not "superseded": these are deliberately still
+        // trusted, and the audit trail should not read as if they were revoked.
+        retainedSerials: retained,
+        note: 'Previous unit keys remain valid so documents already stamped with them keep verifying',
+      },
+    });
+
+    return { rotated, retainedPrevious: retained };
+  }
+
   /** Generate a keypair in the HSM and return a CSR signed by that key. */
   private async generateManagedCsr(subject: string, label: string, keyId: string, caDir: string): Promise<string> {
     const module = process.env.PKCS11_MODULE ?? '/usr/local/lib/libpkcs11-proxy.so';
