@@ -11,6 +11,7 @@ import { CertRequestPageDto, CertRequestResponseDto, CertificateResponseDto } fr
 import { CertRequestQueryDto } from './dto/cert-request-query.dto';
 import { CreateCertRequestDto } from './dto/create-cert-request.dto';
 import { IssueOrgUnitCertDto } from './dto/issue-org-unit.dto';
+import { OffboardDto } from './dto/offboard.dto';
 import { IssueManagedDto } from './dto/issue-managed.dto';
 import { CertListQueryDto } from './dto/cert-list-query.dto';
 import { RenewManagedDto } from './dto/renew-managed.dto';
@@ -94,6 +95,48 @@ export class CertificateController {
   @Get('org-units/:id/signing-key')
   orgUnitSigningKey(@Param('id') id: string) {
     return this.svc.orgUnitSigningKey(id);
+  }
+
+  @ApiOperation({
+    summary: "Issue a staff member's personal signing key",
+    description:
+      "A signature is personal, so the key belongs to the verified PERSON entity behind the login rather than to the account. The login must be linked to that person and the person must have passed KYC. The subject names the employer and department from the org chart.",
+  })
+  @ApiCreatedResponse()
+  @HttpCode(201)
+  @Post('users/:id/signing-key')
+  issuePersonalKey(@Param('id') id: string, @Request() req: any) {
+    // cert:issue is resolved inside the service against the PERSON entity, as
+    // for every other issuance path.
+    return this.svc.issuePersonalKey(id, req.user.userId);
+  }
+
+  @ApiOperation({
+    summary: "The key a person signs with, and why they cannot sign if they cannot",
+  })
+  @ApiOkResponse()
+  @RequirePermission('cert:read')
+  @ScopedTo({ target: 'USER', from: 'param', name: 'id' })
+  @Get('users/:id/signing-key')
+  personalSigningKey(@Param('id') id: string) {
+    return this.svc.personalSigningKey(id);
+  }
+
+  @ApiOperation({
+    summary: 'Offboard a leaver',
+    description:
+      "Hands over any unit they head, revokes their personal key, and deactivates the account. Department stamps are signed with the unit's own key, so nothing that unit ever released is affected — the response lists those keys with their live status as evidence.",
+  })
+  @ApiCreatedResponse()
+  @HttpCode(200)
+  @RequirePermission('user:deactivate')
+  @ScopedTo({ target: 'USER', from: 'param', name: 'id' })
+  @Post('users/:id/offboard')
+  offboard(@Param('id') id: string, @Body() dto: OffboardDto, @Request() req: any) {
+    return this.svc.offboardUser(id, req.user.userId, {
+      successorUserId: dto.successorUserId,
+      leaveSeatsVacant: dto.leaveSeatsVacant === true,
+    });
   }
 
   @ApiOperation({ summary: 'Issue a certificate for a NEW request' })

@@ -205,7 +205,17 @@ export class CertificateService {
    * the operator/entity authorises its later use via the HSM passphrase. No CSR
    * is ever supplied by the caller.
    */
-  async issueManagedCertificate(entityId: string, userId: string) {
+  /**
+   * @param opts Callers that know more about the holder than the entity record
+   *   does may supply their own subject DN and key-label prefix — a staff
+   *   personal key names the employer and department from the org chart, which
+   *   the PERSON entity itself has no way to know.
+   */
+  async issueManagedCertificate(
+    entityId: string,
+    userId: string,
+    opts: { subject?: string; keyLabelPrefix?: string } = {},
+  ) {
     const entity = await this.prisma.entity.findUnique({
       where: { id: entityId },
       include: { orgProfile: true },
@@ -236,10 +246,10 @@ export class CertificateService {
     // Build the subject DN (policy_strict requires C, O, CN)
     const country = (entity.country || 'NA').toUpperCase();
     const orgName = (entity.orgProfile?.legalName || entity.name).replace(/[\/\n\r]/g, ' ').trim();
-    const subject = `/C=${country}/O=${orgName}/CN=${orgName}`;
+    const subject = opts.subject ?? `/C=${country}/O=${orgName}/CN=${orgName}`;
 
     // Unique PKCS#11 handle for this issuance
-    const keyLabel = `entity-${entityId.slice(0, 8)}-${Date.now()}`;
+    const keyLabel = `${opts.keyLabelPrefix ?? `entity-${entityId.slice(0, 8)}`}-${Date.now()}`;
     const keyId = randomBytes(8).toString('hex');
     const caDir = process.env.CA_DIR ?? '/opt/ee-ca';
 
@@ -541,6 +551,275 @@ export class CertificateService {
     });
 
     return { rotated, retainedPrevious: retained };
+  }
+
+  /**
+   * Issue a staff member's personal signing key.
+   *
+   * A signature is personal: it says a named individual signed, so the key is
+   * tied to that person's verified PERSON entity rather than to their account.
+   * The account is just a login and can be recreated; the KYC'd identity behind
+   * it is what makes a signature attributable.
+   *
+   * This has to work in minutes for a joiner, not as a ticket to the PKI team,
+   * which is why it is one call against the user — the caller should not have to
+   * know the entity id behind the person, and the refusals name the screen that
+   * fixes them.
+   */
+  async issuePersonalKey(userId: string, actingUserId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        personEntity: { include: { personProfile: true } },
+        orgUnit: { include: { entity: { include: { orgProfile: true } } } },
+      },
+    });
+    if (!user) throw new NotFoundException(`User ${userId} not found`);
+
+    if (!user.personEntityId || !user.personEntity) {
+      throw new UnprocessableEntityException(
+        `${user.displayName || user.username} is not linked to a verified person yet. ` +
+          'Link the login to its PERSON entity on the org chart before issuing a personal key — ' +
+          'a signature has to belong to a KYC\'d individual, not to an account.',
+      );
+    }
+
+    const person = user.personEntity;
+
+    if (person.entityType !== EntityType.PERSON) {
+      throw new UnprocessableEntityException(
+        `${user.username} is linked to ${person.name}, which is not a PERSON entity.`,
+      );
+    }
+
+    if (!(person.status === EntityStatus.APPROVED && person.kycStatus === 'APPROVED')) {
+      await this.audit(AuditEvent.REQUEST_REJECTED, {
+        entityId: person.id, userId: actingUserId,
+        detail: {
+          reason: 'PERSON_NOT_APPROVED', targetUserId: userId,
+          entityStatus: person.status, kycStatus: person.kycStatus,
+        },
+      });
+      throw new UnprocessableEntityException(
+        `${person.name} has not completed KYC. Current status: ${person.status} / kycStatus: ${person.kycStatus}`,
+      );
+    }
+
+    // Permission and the rest of the mechanics are the entity path's, unchanged:
+    // a PERSON entity is a legal holder, so nothing new is needed to hold a key.
+    // What this method adds is resolving the person from the account, refusing
+    // clearly when that link is missing, and naming the employer in the subject.
+    const cert = await this.issueManagedCertificate(person.id, actingUserId, {
+      subject: this.personalSubject(user, person),
+      keyLabelPrefix: `person-${userId.slice(0, 8)}`,
+    });
+
+    await this.audit(AuditEvent.KEY_GENERATED, {
+      entityId: person.id, userId: actingUserId,
+      detail: {
+        holder: 'PERSON', targetUserId: userId, personEntityId: person.id,
+        orgUnitId: user.orgUnitId, serial: cert.serial,
+      },
+    });
+
+    return {
+      ...cert,
+      userId,
+      username: user.username,
+      personEntityId: person.id,
+      orgUnitId: user.orgUnitId,
+    };
+  }
+
+  /**
+   * A staff signature should read as "this named person, at this employer, in
+   * this department" — that is what a recipient needs in order to judge it.
+   *
+   * policy_strict requires O, so someone who is not on the org chart falls back
+   * to their own name as the organisation: a valid individual credential rather
+   * than a refusal, because placement is an HR fact and should not block a key.
+   */
+  private personalSubject(
+    user: { orgUnit?: { name: string; code: string | null; entity: { name: string; orgProfile: { legalName: string } | null } } | null },
+    person: { name: string; country: string; personProfile: { firstName: string; lastName: string } | null },
+  ): string {
+    const clean = (v: string) => v.replace(/[\/\n\r]/g, ' ').trim();
+    const country = (person.country || 'NA').toUpperCase();
+
+    const profile = person.personProfile;
+    const commonName = clean(profile ? `${profile.firstName} ${profile.lastName}` : person.name);
+
+    const unit = user.orgUnit;
+    const employer = unit ? clean(unit.entity.orgProfile?.legalName || unit.entity.name) : commonName;
+    const ou = unit ? clean(unit.code ? `${unit.name} (${unit.code})` : unit.name) : null;
+
+    return ou
+      ? `/C=${country}/O=${employer}/OU=${ou}/CN=${commonName}`
+      : `/C=${country}/O=${employer}/CN=${commonName}`;
+  }
+
+  /** The key a person signs with right now, and why they cannot sign if they cannot. */
+  async personalSigningKey(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, username: true, displayName: true, isActive: true, personEntityId: true },
+    });
+    if (!user) throw new NotFoundException(`User ${userId} not found`);
+
+    const certs = user.personEntityId
+      ? await this.prisma.certificate.findMany({
+          where: { hsmManaged: true, request: { entityId: user.personEntityId } },
+          orderBy: { createdAt: 'desc' },
+          select: {
+            serial: true, subject: true, validFrom: true, validTo: true,
+            isRevoked: true, revokedAt: true, hsmKeyLabel: true, createdAt: true,
+          },
+        })
+      : [];
+
+    const now = new Date();
+    const usable = certs.filter((c) => !c.isRevoked && c.validTo > now);
+    const [current, ...retired] = usable;
+
+    const blockers: string[] = [];
+    if (!user.isActive) blockers.push('The account is deactivated');
+    if (!user.personEntityId) blockers.push('The login is not linked to a verified person');
+    if (!current) {
+      blockers.push(
+        certs.length
+          ? 'Every personal key this person holds is revoked or expired'
+          : 'No personal key has been issued yet',
+      );
+    }
+
+    return {
+      userId: user.id,
+      username: user.username,
+      displayName: user.displayName,
+      personEntityId: user.personEntityId,
+      current: current ?? null,
+      retired,
+      revokedOrExpired: certs.filter((c) => c.isRevoked || c.validTo <= now),
+      canSign: blockers.length === 0,
+      blockers,
+    };
+  }
+
+  /**
+   * Offboard a leaver: hand over the units they head, revoke their personal key,
+   * and deactivate the account.
+   *
+   * The whole reason this is safe is WP-3.1. A department stamp is signed with
+   * the DEPARTMENT's key, so revoking a leaver's personal key invalidates the
+   * documents they signed as themselves and touches nothing they approved on
+   * behalf of their unit. Under the obvious alternative — stamping with the
+   * approver's own key — offboarding one head would have invalidated every stamp
+   * that department ever released. The report returns the unit keys explicitly
+   * so an operator can see they were left alone rather than being asked to trust
+   * that they were.
+   *
+   * "Handing over a unit key" turns out to be nothing cryptographic: the key
+   * belongs to the unit, so succession is an appointment, not a key ceremony.
+   */
+  async offboardUser(
+    userId: string,
+    actingUserId: string,
+    opts: { successorUserId?: string; leaveSeatsVacant?: boolean } = {},
+  ) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        unitsHeaded: { where: { isActive: true }, select: { id: true, name: true, unitType: true } },
+      },
+    });
+    if (!user) throw new NotFoundException(`User ${userId} not found`);
+
+    // A headless department cannot approve a stamp request, so succession is
+    // settled before the account goes — not discovered at month-end by someone
+    // whose invoice will not move.
+    if (user.unitsHeaded.length && !opts.successorUserId && !opts.leaveSeatsVacant) {
+      const names = user.unitsHeaded.map((u) => u.name).join(', ');
+      throw new UnprocessableEntityException(
+        `${user.displayName || user.username} heads ${names}. Name a successor (successorUserId), ` +
+          'or pass leaveSeatsVacant to accept that those units cannot approve a stamp request until someone is appointed.',
+      );
+    }
+
+    if (opts.successorUserId) {
+      const successor = await this.prisma.user.findUnique({
+        where: { id: opts.successorUserId },
+        select: { id: true, isActive: true, username: true },
+      });
+      if (!successor) throw new NotFoundException(`Successor ${opts.successorUserId} not found`);
+      if (!successor.isActive) {
+        throw new UnprocessableEntityException(
+          `${successor.username} is deactivated and cannot take over a unit.`,
+        );
+      }
+    }
+
+    const handedOver: Array<{ orgUnitId: string; name: string; to: string | null }> = [];
+    for (const unit of user.unitsHeaded) {
+      await this.prisma.orgUnit.update({
+        where: { id: unit.id },
+        data: { headUserId: opts.successorUserId ?? null },
+      });
+      await this.audit(AuditEvent.ORG_UNIT_HEAD_CHANGED, {
+        userId: actingUserId,
+        detail: {
+          orgUnitId: unit.id, previousHeadUserId: userId,
+          headUserId: opts.successorUserId ?? null, reason: 'OFFBOARDING',
+        },
+      });
+      handedOver.push({ orgUnitId: unit.id, name: unit.name, to: opts.successorUserId ?? null });
+    }
+
+    // Revoke the personal key(s). This is the leaver's own signature and it
+    // should stop being trusted the day they go.
+    const personalCerts = user.personEntityId
+      ? await this.prisma.certificate.findMany({
+          where: { isRevoked: false, request: { entityId: user.personEntityId } },
+          select: { serial: true },
+        })
+      : [];
+
+    const revoked: string[] = [];
+    for (const cert of personalCerts) {
+      try {
+        await this.revokeCertificate(cert.serial, 'offboarding', actingUserId);
+        revoked.push(cert.serial);
+      } catch (err) {
+        this.logger.warn(`Offboarding ${userId}: could not revoke ${cert.serial}: ${(err as Error).message}`);
+      }
+    }
+
+    await this.prisma.user.update({ where: { id: userId }, data: { isActive: false } });
+
+    // Evidence, not reassurance: the unit keys for every unit they headed, with
+    // their live status, so the operator can see nothing was collaterally
+    // revoked.
+    const unitKeys = handedOver.length
+      ? await this.prisma.certificate.findMany({
+          where: { request: { orgUnitId: { in: handedOver.map((h) => h.orgUnitId) } } },
+          orderBy: { createdAt: 'desc' },
+          select: { serial: true, isRevoked: true, validTo: true, request: { select: { orgUnitId: true } } },
+        })
+      : [];
+
+    const now = new Date();
+    return {
+      userId,
+      username: user.username,
+      accountDeactivated: true,
+      personalKeysRevoked: revoked,
+      unitsHandedOver: handedOver,
+      seatsLeftVacant: handedOver.filter((h) => h.to === null).map((h) => h.name),
+      unitKeysUntouched: unitKeys.map((c) => ({
+        serial: c.serial,
+        orgUnitId: c.request?.orgUnitId ?? null,
+        status: c.isRevoked ? 'REVOKED' : c.validTo <= now ? 'EXPIRED' : 'GOOD',
+      })),
+    };
   }
 
   /** Generate a keypair in the HSM and return a CSR signed by that key. */

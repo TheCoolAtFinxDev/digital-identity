@@ -262,6 +262,98 @@ assert_eq "a Finance-scoped operator may NOT issue for the sibling department" "
 assert_eq "a Finance-scoped operator may NOT issue for the division above it" "403" \
   "$(as_code "$FINOP" POST /v1/cert-requests/org-unit "{\"orgUnitId\":\"$DIV_ID\"}")"
 
+# ── A signature is personal ──────────────────────────────────────────────────
+head2 "A staff member's personal key belongs to the person, not the account"
+
+STAFF_ID=$(jq_get "$(api POST /v1/users \
+  "{\"username\":\"wp33-thabo-$SUFFIX\",\"email\":\"wp33-thabo-$SUFFIX@example.test\",\"displayName\":\"Thabo Mokoena\",\"password\":\"$STAFF_PASS\"}")" id)
+[ -n "$STAFF_ID" ] && ok "a staff login exists" || { red "staff creation failed"; exit 1; }
+
+assert_eq "an unlinked login cannot be issued a personal key" "422" \
+  "$(api_code POST "/v1/users/$STAFF_ID/signing-key")"
+
+UNLINKED=$(api POST "/v1/users/$STAFF_ID/signing-key")
+assert_contains "the refusal says a signature must belong to a verified person" "not linked to a verified person" "$UNLINKED"
+
+NOKEY=$(api GET "/v1/users/$STAFF_ID/signing-key")
+assert_eq "an unlinked person cannot sign" "false" "$(jq_get "$NOKEY" canSign)"
+
+# A real PERSON entity, through the real KYC workflow.
+PERSON_ID=$(jq_get "$(api POST /v1/entities \
+  "{\"name\":\"Thabo Mokoena\",\"country\":\"LS\",\"entityType\":\"PERSON\"}")" id)
+api POST "/v1/entities/$PERSON_ID/person-profile" \
+  "{\"firstName\":\"Thabo\",\"lastName\":\"Mokoena\",\"dateOfBirth\":\"1990-04-11\",\"nationality\":\"LS\",\"idType\":\"NATIONAL_ID\",\"idNumber\":\"ID-$SUFFIX\",\"addressLine1\":\"12 Kingsway\",\"city\":\"Maseru\",\"addressCountry\":\"LS\"}" >/dev/null
+
+api PATCH "/v1/users/$STAFF_ID/placement" "{\"personEntityId\":\"$PERSON_ID\",\"orgUnitId\":\"$FIN_ID\"}" >/dev/null
+
+assert_eq "a linked but un-KYC'd person is still refused a key" "422" \
+  "$(api_code POST "/v1/users/$STAFF_ID/signing-key")"
+
+KYC_ID=$(jq_get "$(api POST /v1/verification-cases "{\"entityId\":\"$PERSON_ID\",\"caseType\":\"KYC\"}")" id)
+printf 'Passport (test fixture)\n' > "$WORK/passport.txt"
+curl -s -X POST "$BASE/v1/verification-cases/$KYC_ID/evidence" \
+  -H "Authorization: Bearer $ADMIN" \
+  -F "file=@$WORK/passport.txt;type=text/plain" -F "documentType=PASSPORT" >/dev/null
+api PATCH "/v1/verification-cases/$KYC_ID/submit" >/dev/null
+api PATCH "/v1/verification-cases/$KYC_ID/assign" '{}' >/dev/null
+api PATCH "/v1/verification-cases/$KYC_ID/review" '{"reviewNotes":"Identity verified for the personal-key regression."}' >/dev/null
+api PATCH "/v1/verification-cases/$KYC_ID/approve" >/dev/null
+assert_eq "the person reaches APPROVED" "APPROVED" "$(jq_get "$(api GET "/v1/entities/$PERSON_ID")" status)"
+
+PERSONAL=$(api POST "/v1/users/$STAFF_ID/signing-key")
+PERSONAL_SERIAL=$(jq_get "$PERSONAL" serial)
+[ -n "$PERSONAL_SERIAL" ] && ok "a personal key is issued ($PERSONAL_SERIAL)" || { bad "personal key issued" "$PERSONAL"; exit 1; }
+
+PSUBJ=$(jq_get "$PERSONAL" subject)
+assert_contains "the subject names the person" "CN = Thabo Mokoena" "$PSUBJ"
+assert_contains "the subject names the employer, not the person, as the organisation" "O = UnitKey Co" "$PSUBJ"
+assert_contains "the subject names the department they work in" "OU = Finance" "$PSUBJ"
+assert_contains "the PKCS#11 label marks it as a personal key" "person-" "$(jq_get "$PERSONAL" hsmKeyLabel)"
+
+CAN_SIGN=$(api GET "/v1/users/$STAFF_ID/signing-key")
+assert_eq "the person can now sign" "true" "$(jq_get "$CAN_SIGN" canSign)"
+assert_eq "and signs with the key just issued" "$PERSONAL_SERIAL" "$(jq_get "$CAN_SIGN" current.serial)"
+
+# ── Offboarding ──────────────────────────────────────────────────────────────
+head2 "Offboarding a leaver does not invalidate their department's stamps"
+
+# Make them head of Finance so succession is actually in play.
+api PATCH "/v1/org-units/$FIN_ID/head" "{\"headUserId\":\"$STAFF_ID\"}" >/dev/null
+
+SUCCESSOR_ID=$(jq_get "$(api POST /v1/users \
+  "{\"username\":\"wp34-lineo-$SUFFIX\",\"email\":\"wp34-lineo-$SUFFIX@example.test\",\"displayName\":\"Lineo Ranthithi\",\"password\":\"$STAFF_PASS\"}")" id)
+
+assert_eq "offboarding a unit head without a successor is refused" "422" \
+  "$(api_code POST "/v1/users/$STAFF_ID/offboard" '{}')"
+
+REFUSED=$(api POST "/v1/users/$STAFF_ID/offboard" '{}')
+assert_contains "the refusal names the unit they head" "Finance" "$REFUSED"
+
+# The unit's current key, before anyone is offboarded.
+UNIT_SERIAL=$(jq_get "$(api GET "/v1/org-units/$FIN_ID/signing-key")" current.serial)
+[ -n "$UNIT_SERIAL" ] && ok "Finance is stamping with $UNIT_SERIAL before offboarding" || bad "unit has a current key"
+
+OFF=$(api POST "/v1/users/$STAFF_ID/offboard" "{\"successorUserId\":\"$SUCCESSOR_ID\"}")
+assert_eq "the account is deactivated" "true" "$(jq_get "$OFF" accountDeactivated)"
+assert_contains "their personal key is revoked" "$PERSONAL_SERIAL" "$(jq_get "$OFF" personalKeysRevoked)"
+assert_contains "the unit they headed is handed over" "Finance" "$(jq_get "$OFF" unitsHandedOver)"
+assert_eq "no seat is left vacant" "[]" "$(jq_get "$OFF" seatsLeftVacant)"
+
+assert_eq "the leaver's personal key now reports REVOKED" "REVOKED" \
+  "$(jq_get "$(curl -s "$BASE/v1/certificates/$PERSONAL_SERIAL/status")" status)"
+
+# THE POINT of holding the key at the unit rather than at the person.
+assert_eq "THE POINT: the department key is untouched, so its stamps still verify" "GOOD" \
+  "$(jq_get "$(curl -s "$BASE/v1/certificates/$UNIT_SERIAL/status")" status)"
+
+assert_contains "the report shows the unit keys it left alone" "$UNIT_SERIAL" "$(jq_get "$OFF" unitKeysUntouched)"
+
+HANDED=$(api GET "/v1/org-units/$FIN_ID")
+assert_eq "the successor now heads the unit" "$SUCCESSOR_ID" "$(jq_get "$HANDED" headUserId)"
+assert_eq "so the unit can still release a stamp" "false" "$(jq_get "$HANDED" headVacant)"
+
+assert_eq "the leaver can no longer sign" "false" "$(jq_get "$(api GET "/v1/users/$STAFF_ID/signing-key")" canSign)"
+
 printf '\n\033[1m── Result ──\033[0m\n'
 green "  passed: $PASS"
 [ "$FAIL" -gt 0 ] && red "  failed: $FAIL"
