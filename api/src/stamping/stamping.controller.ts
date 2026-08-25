@@ -23,6 +23,7 @@ import {
 import { Response } from 'express';
 import { memoryStorage } from 'multer';
 import { RequirePermission } from '../iam/permission.decorator';
+import { GlobalScope, ScopedTo } from '../iam/scope.decorator';
 import { CreateStampDto } from './dto/create-stamp.dto';
 import { StampQueryDto } from './dto/stamp-query.dto';
 import { MAX_STAMP_FILE_BYTES } from './stamp-storage.service';
@@ -35,6 +36,7 @@ export class StampingController {
   constructor(private readonly svc: StampingService) {}
 
   @RequirePermission('stamp:create')
+  @ScopedTo({ target: 'ENTITY', from: 'body', name: 'entityId' })
   @ApiOperation({
     summary: 'Stamp a document (visible seal + QR, then HSM signature)',
     description:
@@ -58,6 +60,7 @@ export class StampingController {
   }
 
   @RequirePermission('stamp:read')
+  @GlobalScope()
   @ApiOperation({ summary: 'List stamped documents' })
   @ApiOkResponse()
   @Get()
@@ -66,6 +69,7 @@ export class StampingController {
   }
 
   @RequirePermission('stamp:read')
+  @ScopedTo({ target: 'STAMP', from: 'param', name: 'id' })
   @ApiOperation({ summary: 'Get a stamp record' })
   @ApiOkResponse()
   @Get(':id')
@@ -74,6 +78,7 @@ export class StampingController {
   }
 
   @RequirePermission('stamp:read')
+  @ScopedTo({ target: 'STAMP', from: 'param', name: 'id' })
   @ApiOperation({ summary: 'Download the stamped document' })
   @Get(':id/download')
   async download(@Param('id') id: string, @Res() res: Response) {
@@ -85,6 +90,7 @@ export class StampingController {
   }
 
   @RequirePermission('stamp:read')
+  @ScopedTo({ target: 'STAMP', from: 'param', name: 'id' })
   @ApiOperation({ summary: 'QR code PNG for the stamp verification URL' })
   @Header('Content-Type', 'image/png')
   @Get(':id/qr.png')

@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, Request } from '@nestjs/common';
 import { ApiBearerAuth, ApiCreatedResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { RequirePermission } from '../iam/permission.decorator';
+import { GlobalScope, ScopedTo } from '../iam/scope.decorator';
 import { CreateOrgUnitDto } from './dto/create-org-unit.dto';
 import { OrgUnitQueryDto } from './dto/org-unit-query.dto';
 import { SetHeadDto } from './dto/set-head.dto';
@@ -15,6 +16,7 @@ export class OrgUnitsController {
   constructor(private readonly svc: OrgUnitsService) {}
 
   @RequirePermission('orgunit:create')
+  @ScopedTo({ target: 'ORG_UNIT', from: 'body', name: 'parentId' })
   @ApiOperation({
     summary: 'Create an organisational unit',
     description: 'The structure runs ORGANISATION > DIVISION > DEPARTMENT. Exactly one root per organisation.',
@@ -26,6 +28,7 @@ export class OrgUnitsController {
   }
 
   @RequirePermission('orgunit:read')
+  @GlobalScope()
   @ApiOperation({ summary: 'List organisational units, flat or as a tree' })
   @ApiOkResponse()
   @Get('org-units')
@@ -34,6 +37,7 @@ export class OrgUnitsController {
   }
 
   @RequirePermission('orgunit:read')
+  @ScopedTo({ target: 'ORG_UNIT', from: 'param', name: 'id' })
   @ApiOperation({ summary: 'Get a unit with its head, members, children and ancestry' })
   @ApiOkResponse()
   @Get('org-units/:id')
@@ -42,6 +46,14 @@ export class OrgUnitsController {
   }
 
   @RequirePermission('orgunit:update')
+  // Two-sided: renaming needs authority over the unit, and moving it needs
+  // authority over the destination too — otherwise a division head could graft
+  // a unit onto a division they do not run. A rename carries no parentId, so the
+  // second declaration simply does not apply to it.
+  @ScopedTo([
+    { target: 'ORG_UNIT', from: 'param', name: 'id' },
+    { target: 'ORG_UNIT', from: 'body', name: 'parentId' },
+  ])
   @ApiOperation({ summary: 'Rename, re-code or move a unit' })
   @ApiOkResponse()
   @Patch('org-units/:id')
@@ -50,6 +62,7 @@ export class OrgUnitsController {
   }
 
   @RequirePermission('orgunit:update')
+  @ScopedTo({ target: 'ORG_UNIT', from: 'param', name: 'id' })
   @ApiOperation({
     summary: 'Appoint or clear the head of a unit',
     description: 'The head approves stamp requests from this unit. Send no headUserId to leave the seat vacant.',
@@ -61,6 +74,7 @@ export class OrgUnitsController {
   }
 
   @RequirePermission('orgunit:update')
+  @ScopedTo({ target: 'ORG_UNIT', from: 'param', name: 'id' })
   @ApiOperation({
     summary: 'Deactivate a unit',
     description: 'Refused while the unit still holds people or live sub-units. Units are never deleted — they are evidence.',
@@ -74,6 +88,14 @@ export class OrgUnitsController {
   // ── People on the chart ────────────────────────────────────────────────────
 
   @RequirePermission('user:update')
+  // Two-sided for the same reason as moving a unit: placement changes both the
+  // unit a person leaves and the one they join. Placing someone who is on no
+  // chart at all resolves to nothing on the first declaration and so stays an
+  // organisation-wide act, which is the right default for a new joiner.
+  @ScopedTo([
+    { target: 'USER', from: 'param', name: 'id' },
+    { target: 'ORG_UNIT', from: 'body', name: 'orgUnitId' },
+  ])
   @ApiOperation({
     summary: 'Place a person on the org chart',
     description: 'Sets the unit they work in, their line manager, and the verified PERSON entity behind their login.',
@@ -85,6 +107,7 @@ export class OrgUnitsController {
   }
 
   @RequirePermission('orgunit:read')
+  @ScopedTo({ target: 'USER', from: 'param', name: 'id' })
   @ApiOperation({
     summary: 'Who signs off for this person',
     description: 'Their line manager reviews and their unit head approves. Reports any blocker — no unit, vacant head, reviewer and approver being the same person — before a stamp request is raised.',

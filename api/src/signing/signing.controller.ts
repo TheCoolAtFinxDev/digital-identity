@@ -1,6 +1,7 @@
 import { Body, Controller, Get, HttpCode, Param, Post, Request } from '@nestjs/common';
 import { ApiBearerAuth, ApiCreatedResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { RequirePermission } from '../iam/permission.decorator';
+import { GlobalScope, ScopedTo } from '../iam/scope.decorator';
 import { SignDto } from './dto/sign.dto';
 import { VerifySignatureDto } from './dto/verify-signature.dto';
 import { SigningService } from './signing.service';
@@ -12,6 +13,7 @@ export class SigningController {
   constructor(private readonly svc: SigningService) {}
 
   @RequirePermission('signature:create')
+  @ScopedTo({ target: 'ENTITY', from: 'body', name: 'entityId' })
   @ApiOperation({ summary: 'Sign content with an entity\'s HSM-held key' })
   @ApiCreatedResponse()
   @HttpCode(201)
@@ -21,6 +23,7 @@ export class SigningController {
   }
 
   @RequirePermission('signature:read')
+  @GlobalScope()
   @ApiOperation({ summary: 'Verify a signature against an entity/certificate key + revocation status' })
   @ApiOkResponse()
   @HttpCode(200)
@@ -30,6 +33,7 @@ export class SigningController {
   }
 
   @RequirePermission('signature:read')
+  @ScopedTo({ target: 'ENTITY', from: 'param', name: 'entityId' })
   @ApiOperation({ summary: 'List signature records produced for an entity' })
   @ApiOkResponse()
   @Get('entity/:entityId')

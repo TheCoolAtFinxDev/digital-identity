@@ -18,6 +18,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { RequirePermission } from '../iam/permission.decorator';
+import { GlobalScope, ScopedTo } from '../iam/scope.decorator';
 import { CreateRelationshipDto } from './dto/create-relationship.dto';
 import { RelationshipQueryDto } from './dto/relationship-query.dto';
 import { UpdateRelationshipDto } from './dto/update-relationship.dto';
@@ -30,6 +31,7 @@ export class EntityRelationshipsController {
   constructor(private readonly svc: EntityRelationshipsService) {}
 
   @RequirePermission('relationship:create')
+  @ScopedTo({ target: 'ENTITY', from: 'body', name: 'subjectEntityId' })
   @ApiOperation({ summary: 'Create a new entity relationship' })
   @ApiCreatedResponse()
   @Post()
@@ -38,6 +40,7 @@ export class EntityRelationshipsController {
   }
 
   @RequirePermission('relationship:read')
+  @GlobalScope()
   @ApiOperation({ summary: 'List entity relationships (paginated)' })
   @ApiOkResponse()
   @Get()
@@ -46,6 +49,7 @@ export class EntityRelationshipsController {
   }
 
   @RequirePermission('relationship:read')
+  @ScopedTo({ target: 'RELATIONSHIP', from: 'param', name: 'id' })
   @ApiOperation({ summary: 'Get a relationship by ID' })
   @ApiOkResponse()
   @Get(':id')
@@ -54,6 +58,7 @@ export class EntityRelationshipsController {
   }
 
   @RequirePermission('relationship:update')
+  @ScopedTo({ target: 'RELATIONSHIP', from: 'param', name: 'id' })
   @ApiOperation({ summary: 'Update mutable fields of a relationship' })
   @ApiOkResponse()
   @Patch(':id')
@@ -62,6 +67,7 @@ export class EntityRelationshipsController {
   }
 
   @RequirePermission('relationship:deactivate')
+  @ScopedTo({ target: 'RELATIONSHIP', from: 'param', name: 'id' })
   @ApiOperation({ summary: 'Deactivate a relationship' })
   @ApiOkResponse()
   @HttpCode(200)

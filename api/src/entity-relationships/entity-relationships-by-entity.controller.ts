@@ -1,6 +1,7 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { RequirePermission } from '../iam/permission.decorator';
+import { ScopedTo } from '../iam/scope.decorator';
 import { EntityRelationshipsQueryDto } from './dto/relationship-query.dto';
 import { EntityRelationshipsService } from './entity-relationships.service';
 
@@ -11,6 +12,7 @@ export class EntityRelationshipsByEntityController {
   constructor(private readonly svc: EntityRelationshipsService) {}
 
   @RequirePermission('relationship:read')
+  @ScopedTo({ target: 'ENTITY', from: 'param', name: 'id' })
   @ApiOperation({ summary: 'List relationships where entity is subject or object' })
   @ApiOkResponse()
   @Get(':id/relationships')

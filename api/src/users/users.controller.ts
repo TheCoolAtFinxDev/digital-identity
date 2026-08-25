@@ -19,6 +19,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { RequirePermission } from '../iam/permission.decorator';
+import { GlobalScope, ScopedTo } from '../iam/scope.decorator';
 import { AssignRoleDto } from './dto/assign-role.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -33,6 +34,7 @@ export class UsersController {
   constructor(private readonly svc: UsersService) {}
 
   @RequirePermission('user:create')
+  @GlobalScope()
   @ApiOperation({ summary: 'Create a new operator user' })
   @ApiCreatedResponse()
   @Post()
@@ -41,6 +43,7 @@ export class UsersController {
   }
 
   @RequirePermission('user:read')
+  @GlobalScope()
   @ApiOperation({ summary: 'List users' })
   @ApiOkResponse()
   @Get()
@@ -49,6 +52,7 @@ export class UsersController {
   }
 
   @RequirePermission('user:read')
+  @ScopedTo({ target: 'USER', from: 'param', name: 'id' })
   @ApiOperation({ summary: 'Get a user by ID' })
   @ApiOkResponse()
   @Get(':id')
@@ -57,6 +61,7 @@ export class UsersController {
   }
 
   @RequirePermission('user:update')
+  @ScopedTo({ target: 'USER', from: 'param', name: 'id' })
   @ApiOperation({ summary: 'Update user email or display name' })
   @ApiOkResponse()
   @Patch(':id')
@@ -65,6 +70,7 @@ export class UsersController {
   }
 
   @RequirePermission('user:deactivate')
+  @ScopedTo({ target: 'USER', from: 'param', name: 'id' })
   @ApiOperation({ summary: 'Deactivate a user account' })
   @ApiOkResponse()
   @HttpCode(200)
@@ -74,6 +80,7 @@ export class UsersController {
   }
 
   @RequirePermission('user:update')
+  @ScopedTo({ target: 'USER', from: 'param', name: 'id' })
   @ApiOperation({ summary: 'Change a user password' })
   @ApiNoContentResponse()
   @HttpCode(204)
@@ -83,6 +90,11 @@ export class UsersController {
   }
 
   @RequirePermission('user:assign-role')
+  // Not narrowable, deliberately. Granting roles is how authority is created, so
+  // a unit-scoped operator who could do it inside their own unit could mint
+  // themselves anything — including a GLOBAL role. Delegating this needs a rule
+  // about which roles may be granted at which scope, which does not exist yet.
+  @GlobalScope()
   @ApiOperation({ summary: 'Assign a role to a user' })
   @ApiCreatedResponse()
   @Post(':id/roles')
@@ -95,6 +107,7 @@ export class UsersController {
   }
 
   @RequirePermission('user:read')
+  @ScopedTo({ target: 'USER', from: 'param', name: 'id' })
   @ApiOperation({ summary: 'List active role assignments for a user' })
   @ApiOkResponse()
   @Get(':id/roles')
@@ -103,6 +116,8 @@ export class UsersController {
   }
 
   @RequirePermission('user:assign-role')
+  // Not narrowable — same reason as assigning. See above.
+  @GlobalScope()
   @ApiOperation({ summary: 'Revoke a role assignment' })
   @ApiNoContentResponse()
   @HttpCode(204)

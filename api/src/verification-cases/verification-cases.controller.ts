@@ -26,6 +26,7 @@ import {
 import { Response } from 'express';
 import { memoryStorage } from 'multer';
 import { RequirePermission } from '../iam/permission.decorator';
+import { GlobalScope, ScopedTo } from '../iam/scope.decorator';
 import { AssignCaseDto } from './dto/assign-case.dto';
 import { CaseQueryDto } from './dto/case-query.dto';
 import { CreateCaseDto } from './dto/create-case.dto';
@@ -45,6 +46,7 @@ export class VerificationCasesController {
   // ── Cases ──────────────────────────────────────────────────────────────────
 
   @RequirePermission('entity:onboard')
+  @ScopedTo({ target: 'ENTITY', from: 'body', name: 'entityId' })
   @ApiOperation({ summary: 'Create a new KYC or KYB verification case' })
   @ApiCreatedResponse()
   @Post()
@@ -53,6 +55,7 @@ export class VerificationCasesController {
   }
 
   @RequirePermission('entity:read')
+  @GlobalScope()
   @ApiOperation({ summary: 'List verification cases (paginated)' })
   @ApiOkResponse()
   @Get()
@@ -61,6 +64,7 @@ export class VerificationCasesController {
   }
 
   @RequirePermission('entity:read')
+  @ScopedTo({ target: 'VERIFICATION_CASE', from: 'param', name: 'id' })
   @ApiOperation({ summary: 'Get a verification case by ID' })
   @ApiOkResponse()
   @Get(':id')
@@ -69,6 +73,7 @@ export class VerificationCasesController {
   }
 
   @RequirePermission('entity:onboard')
+  @ScopedTo({ target: 'VERIFICATION_CASE', from: 'param', name: 'id' })
   @ApiOperation({ summary: 'Submit a draft case for review' })
   @ApiOkResponse()
   @HttpCode(200)
@@ -78,6 +83,7 @@ export class VerificationCasesController {
   }
 
   @RequirePermission('entity:review')
+  @ScopedTo({ target: 'VERIFICATION_CASE', from: 'param', name: 'id' })
   @ApiOperation({ summary: 'Assign a reviewer to a submitted case' })
   @ApiOkResponse()
   @HttpCode(200)
@@ -87,6 +93,7 @@ export class VerificationCasesController {
   }
 
   @RequirePermission('entity:review')
+  @ScopedTo({ target: 'VERIFICATION_CASE', from: 'param', name: 'id' })
   @ApiOperation({ summary: 'Complete the review step and move to pending approval' })
   @ApiOkResponse()
   @HttpCode(200)
@@ -96,6 +103,7 @@ export class VerificationCasesController {
   }
 
   @RequirePermission('entity:approve')
+  @ScopedTo({ target: 'VERIFICATION_CASE', from: 'param', name: 'id' })
   @ApiOperation({ summary: 'Approve a case — advances entity status to APPROVED' })
   @ApiOkResponse()
   @HttpCode(200)
@@ -105,6 +113,7 @@ export class VerificationCasesController {
   }
 
   @RequirePermission('entity:reject')
+  @ScopedTo({ target: 'VERIFICATION_CASE', from: 'param', name: 'id' })
   @ApiOperation({ summary: 'Reject a case — advances entity status to REJECTED' })
   @ApiOkResponse()
   @HttpCode(200)
@@ -114,6 +123,7 @@ export class VerificationCasesController {
   }
 
   @RequirePermission('entity:onboard')
+  @ScopedTo({ target: 'VERIFICATION_CASE', from: 'param', name: 'id' })
   @ApiOperation({ summary: 'Withdraw a draft or submitted case' })
   @ApiOkResponse()
   @HttpCode(200)
@@ -125,6 +135,7 @@ export class VerificationCasesController {
   // ── Evidence ───────────────────────────────────────────────────────────────
 
   @RequirePermission('entity:onboard')
+  @ScopedTo({ target: 'VERIFICATION_CASE', from: 'param', name: 'id' })
   @ApiOperation({ summary: 'Upload an evidence document (DRAFT cases only)' })
   @ApiCreatedResponse()
   @ApiConsumes('multipart/form-data')
@@ -145,6 +156,7 @@ export class VerificationCasesController {
   }
 
   @RequirePermission('entity:read')
+  @ScopedTo({ target: 'VERIFICATION_CASE', from: 'param', name: 'id' })
   @ApiOperation({ summary: 'List evidence records for a case' })
   @ApiOkResponse()
   @Get(':id/evidence')
@@ -153,6 +165,7 @@ export class VerificationCasesController {
   }
 
   @RequirePermission('entity:read')
+  @ScopedTo({ target: 'VERIFICATION_CASE', from: 'param', name: 'id' })
   @ApiOperation({ summary: 'Download an evidence file' })
   @Get(':id/evidence/:evidenceId/download')
   async downloadEvidence(
@@ -165,6 +178,7 @@ export class VerificationCasesController {
   }
 
   @RequirePermission('entity:onboard')
+  @ScopedTo({ target: 'VERIFICATION_CASE', from: 'param', name: 'id' })
   @ApiOperation({ summary: 'Delete an evidence document (DRAFT cases only)' })
   @ApiNoContentResponse()
   @HttpCode(204)

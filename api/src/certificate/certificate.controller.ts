@@ -15,6 +15,7 @@ import { CertListQueryDto } from './dto/cert-list-query.dto';
 import { RenewManagedDto } from './dto/renew-managed.dto';
 import { RevokeCertDto } from './dto/revoke-cert.dto';
 import { RequirePermission } from '../iam/permission.decorator';
+import { GlobalScope, ScopedTo } from '../iam/scope.decorator';
 
 @ApiBearerAuth()
 @ApiTags('certificates')
@@ -25,6 +26,7 @@ export class CertificateController {
   @ApiOperation({ summary: 'List certificate requests (paginated)' })
   @ApiOkResponse({ type: CertRequestPageDto })
   @RequirePermission('cert:read')
+  @GlobalScope()
   @Get('cert-requests')
   listRequests(@Query() q: CertRequestQueryDto) {
     const page = Math.max(1, parseInt(q.page ?? '1', 10) || 1);
@@ -35,6 +37,7 @@ export class CertificateController {
   @ApiOperation({ summary: 'Submit a new certificate signing request' })
   @ApiCreatedResponse({ type: CertRequestResponseDto })
   @RequirePermission('cert:request')
+  @ScopedTo({ target: 'ENTITY', from: 'body', name: 'entityId' })
   @Post('cert-requests')
   createRequest(@Body() dto: CreateCertRequestDto, @Request() req: any) {
     return this.svc.createRequest(dto, req.user?.userId);
@@ -66,6 +69,7 @@ export class CertificateController {
   @ApiOperation({ summary: 'Get a certificate request by ID' })
   @ApiOkResponse({ type: CertRequestResponseDto })
   @RequirePermission('cert:read')
+  @ScopedTo({ target: 'CERT_REQUEST', from: 'param', name: 'id' })
   @Get('cert-requests/:id')
   getRequest(@Param('id') id: string) {
     return this.svc.getRequest(id);
@@ -74,6 +78,7 @@ export class CertificateController {
   @ApiOperation({ summary: 'List/filter issued certificates (by entity, expiry window)' })
   @ApiOkResponse()
   @RequirePermission('cert:read')
+  @GlobalScope()
   @Get('certificates')
   listCertificates(@Query() q: CertListQueryDto) {
     return this.svc.listCertificates({
@@ -97,6 +102,7 @@ export class CertificateController {
   @ApiOperation({ summary: 'Get an issued certificate by serial number' })
   @ApiOkResponse({ type: CertificateResponseDto })
   @RequirePermission('cert:read')
+  @ScopedTo({ target: 'CERTIFICATE', from: 'param', name: 'serial' })
   @Get('certificates/:serial')
   getCertificate(@Param('serial') serial: string, @Request() req: any) {
     return this.svc.getCertificate(serial, req.user?.userId);
@@ -109,6 +115,7 @@ export class CertificateController {
   @ApiOkResponse({ type: CertificateResponseDto })
   @HttpCode(200)
   @RequirePermission('cert:revoke')
+  @ScopedTo({ target: 'CERTIFICATE', from: 'param', name: 'serial' })
   @Patch('certificates/:serial/revoke')
   revokeCertificate(
     @Param('serial') serial: string,

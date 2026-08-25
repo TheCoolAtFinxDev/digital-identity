@@ -153,25 +153,87 @@ Workflow rules such as creator-only submission and 4-eyes separation are enforce
 | `GET` | `/v1/permissions` | `user:read` |
 | `GET` | `/v1/audit-logs` | `audit:read` |
 
-## Scope Resolution — Important Limitation
+## Scope Resolution
 
-`PermissionGuard` resolves `@RequirePermission(...)` at **GLOBAL scope only**: it
-calls `IamService.hasPermission(userId, code)` with no scope filter, so only
-`GLOBAL` role assignments satisfy a guarded route. An `ENTITY`- or
-`ORGANISATION`-scoped assignment therefore has no effect on any guarded route —
-it only matters where a service resolves the scope itself against a known target,
-which today is `cert:issue` in `CertificateService.resolveIssuePermission()`.
+`PermissionGuard` resolves `@RequirePermission(...)` in two stages.
 
-Practical consequence: a user holding only `ENTITY`-scoped `CERT_MANAGER` cannot
-call `POST /v1/cert-requests` (gated on `cert:request`), even for the entity they
-are scoped to. `scripts/e2e-phase-1b.sh` raises those requests with the GLOBAL
-cert manager and uses the scoped user only for the issuance step, which is what
-N3 actually tests.
+**Stage 1 — organisation-wide.** The permission is looked up with no scope
+filter, exactly as it was before WP-2.4. Every identity operator holds a `GLOBAL`
+assignment, so this answers almost every request in one query and nothing that
+worked before can start failing.
 
-Making the guard scope-aware (deriving a target id from the route/body and
-passing it to `hasPermission`) would let scoped assignments work everywhere. That
-is a deliberate widening of the authorization surface across every guarded route
-and has not been done — it needs a decision, not a patch.
+**Stage 2 — narrow grants.** Only if stage 1 refuses, the guard resolves what the
+route declared it acts on and asks again with the assignments that would cover
+it. A scoped grant is therefore strictly *additional* authority; it can never
+take authority away.
+
+### Routes declare their target; the guard never guesses
+
+Every guarded route carries either `@ScopedTo({...})` naming the resource it acts
+on, or `@GlobalScope()` stating that the permission is not narrowable. Inferring
+the target from the URL shape would mis-scope any route whose `:id` is not what
+it looks like, which grants authority over the wrong resource — a security bug,
+not a glitch. `ScopeCoverageService` walks every controller at boot and **refuses
+to start** if a guarded route declares neither, so the declaration cannot be
+forgotten.
+
+```ts
+@RequirePermission('orgunit:update')
+@ScopedTo({ target: 'ORG_UNIT', from: 'param', name: 'id' })
+@Patch('org-units/:id/head')
+```
+
+Targets: `ORG_UNIT`, `ENTITY`, `USER`, `VERIFICATION_CASE`, `CERT_REQUEST`,
+`CERTIFICATE` (by serial), `RELATIONSHIP`, `STAMP`. Everything other than
+`ORG_UNIT` and `ENTITY` is walked back to its owning entity.
+
+### What a scoped grant covers
+
+- **Down the chart, never up or sideways.** A grant on the Technology division
+  authorises acting on the Finance department beneath it. A grant on Finance
+  authorises nothing on Technology and nothing on a sibling department.
+- **The organisation entity covers the whole chart.** An `ORGANISATION`- or
+  `ENTITY`-scoped grant on the entity a chart hangs off covers every unit in it.
+- **A target that cannot be found refuses the request.** A missing or mistyped id
+  yields no candidates rather than a permissive fallback; whoever holds the
+  permission organisation-wide still reaches the handler's own 404.
+
+### Routes that name two targets
+
+Moving something needs authority over both ends, so those routes declare both and
+the caller must satisfy every declaration the request actually populates:
+
+```ts
+@ScopedTo([
+  { target: 'ORG_UNIT', from: 'param', name: 'id' },        // where it is
+  { target: 'ORG_UNIT', from: 'body',  name: 'parentId' },  // where it goes
+])
+```
+
+A rename carries no `parentId`, so only the first declaration applies to it.
+Holding the source alone is not permission to graft a unit onto someone else's
+division.
+
+### Deliberately not narrowable
+
+Some permissions stay organisation-wide because narrowing them would let a scoped
+holder widen their own authority: creating users, assigning and revoking roles,
+and minting service accounts. Granting a role is how authority is created, so
+delegating it needs a rule about which roles may be granted at which scope — that
+rule does not exist yet.
+
+### Read isolation is still out of scope
+
+List endpoints remain organisation-wide. A department-limited person can still
+*see* other departments' records; they simply cannot act on them. Turning scope
+into a filter across every list is a separate piece of work, and this change does
+not attempt it.
+
+`cert:issue` continues to resolve its own scope inside
+`CertificateService.resolveIssuePermission()` and is unchanged.
+
+Regression: `scripts/e2e-scoped-authority.sh` (23 assertions), plus 35 unit tests
+across `test/scope-resolution.spec.ts` and `test/permission-guard-scope.spec.ts`.
 
 ## Organisational Structure
 
@@ -209,7 +271,8 @@ for every role, ADMIN included — allocate from the top, never reuse.
 Before merging future route changes:
 
 - Every new non-public controller method has `@RequirePermission(...)` or an explicit service-scoped authorization note.
+- Every new guarded method also has `@ScopedTo({...})` or `@GlobalScope()`. The app refuses to boot without one, so this is enforced rather than remembered.
 - Every new permission code is seeded and assigned to the intended system roles.
 - Public routes use `@Public()` and are documented above.
 - Scoped permissions are checked in service code using the resolved target resource ID.
-- `bash scripts/ci.sh` passes: typecheck, unit tests, and the Phase 1-B, org-structure and feature suites.
+- `bash scripts/ci.sh` passes: typecheck, unit tests, and the Phase 1-B, org-structure, scoped-authority and feature suites.

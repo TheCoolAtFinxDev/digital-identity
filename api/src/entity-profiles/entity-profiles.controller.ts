@@ -7,6 +7,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { RequirePermission } from '../iam/permission.decorator';
+import { ScopedTo } from '../iam/scope.decorator';
 import { CreateOrgProfileDto } from './dto/create-org-profile.dto';
 import { CreatePersonProfileDto } from './dto/create-person-profile.dto';
 import { EntityProfilesService } from './entity-profiles.service';
@@ -18,6 +19,7 @@ export class EntityProfilesController {
   constructor(private readonly svc: EntityProfilesService) {}
 
   @RequirePermission('entity:update')
+  @ScopedTo({ target: 'ENTITY', from: 'param', name: 'id' })
   @ApiOperation({ summary: 'Create or update a person profile for a PERSON entity' })
   @ApiCreatedResponse()
   @Post(':id/person-profile')
@@ -30,6 +32,7 @@ export class EntityProfilesController {
   }
 
   @RequirePermission('entity:read')
+  @ScopedTo({ target: 'ENTITY', from: 'param', name: 'id' })
   @ApiOperation({ summary: 'Get the person profile for a PERSON entity' })
   @ApiOkResponse()
   @Get(':id/person-profile')
@@ -38,6 +41,7 @@ export class EntityProfilesController {
   }
 
   @RequirePermission('entity:update')
+  @ScopedTo({ target: 'ENTITY', from: 'param', name: 'id' })
   @ApiOperation({ summary: 'Create or update an organisation profile for an ORGANISATION entity' })
   @ApiCreatedResponse()
   @Post(':id/org-profile')
@@ -50,6 +54,7 @@ export class EntityProfilesController {
   }
 
   @RequirePermission('entity:read')
+  @ScopedTo({ target: 'ENTITY', from: 'param', name: 'id' })
   @ApiOperation({ summary: 'Get the organisation profile for an ORGANISATION entity' })
   @ApiOkResponse()
   @Get(':id/org-profile')

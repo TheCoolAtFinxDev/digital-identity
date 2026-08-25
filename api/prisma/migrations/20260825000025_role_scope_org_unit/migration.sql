@@ -1,0 +1,14 @@
+-- A role can now be granted over an organisational unit.
+--
+-- DEPARTMENT has been a reserved placeholder since Phase 1-B, from before any
+-- Department model existed. It is deliberately NOT reused here: units come in
+-- three tiers (organisation, division, department) and a grant on a division
+-- covers the departments beneath it, so a value named DEPARTMENT would be a lie
+-- on two thirds of the chart. No row has ever carried DEPARTMENT, so nothing
+-- needs migrating; it stays in the enum only because PostgreSQL cannot drop a
+-- value, and is marked deprecated in schema.prisma.
+--
+-- Isolated in its own migration on purpose: Prisma runs a migration containing
+-- ALTER TYPE ... ADD VALUE non-transactionally, so mixing it with DML leaves
+-- partially-committed state behind on failure.
+ALTER TYPE "RoleScope" ADD VALUE IF NOT EXISTS 'ORG_UNIT';

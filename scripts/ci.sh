@@ -108,6 +108,13 @@ else
   FAILED="$FAILED org-structure"
 fi
 
+stage "Scoped authority suite"
+if bash scripts/e2e-scoped-authority.sh "$BASE" 2>&1 | tee "$LOGDIR/e2e-scoped-authority.log" | tail -20; then
+  printf "${GRN}  scoped authority suite passed${NC}\n"
+else
+  FAILED="$FAILED scoped-authority"
+fi
+
 stage "Feature suite (F1-F6)"
 if bash scripts/e2e-features.sh "$BASE" 2>&1 | tee "$LOGDIR/e2e-features.log" | tail -25; then
   printf "${GRN}  feature suite passed${NC}\n"
@@ -121,4 +128,4 @@ if [ -n "$FAILED" ]; then
 fi
 
 stage "CI PASSED"
-printf "${GRN}Both suites green against %s${NC}\n" "$BASE"
+printf "${GRN}All suites green against %s${NC}\n" "$BASE"

@@ -4,6 +4,7 @@ import { ObjectService } from './object.service';
 import { CreateObjectDto } from './dto/create-object.dto';
 import { ObjectPageDto, ObjectQueryDto, ObjectResponseDto } from './dto/object-response.dto';
 import { RequirePermission } from '../iam/permission.decorator';
+import { GlobalScope } from '../iam/scope.decorator';
 
 @ApiBearerAuth()
 @ApiTags('objects')
@@ -14,6 +15,7 @@ export class ObjectController {
   @ApiOperation({ summary: 'List digital object records (paginated)' })
   @ApiOkResponse({ type: ObjectPageDto })
   @RequirePermission('object:read')
+  @GlobalScope()
   @Get()
   listObjects(@Query() q: ObjectQueryDto) {
     const page = Math.max(1, parseInt(q.page ?? '1', 10) || 1);
@@ -24,6 +26,7 @@ export class ObjectController {
   @ApiOperation({ summary: 'Register a new digital object record' })
   @ApiCreatedResponse({ type: ObjectResponseDto })
   @RequirePermission('object:create')
+  @GlobalScope()
   @Post()
   createObject(@Body() dto: CreateObjectDto, @Request() req: any) {
     return this.svc.createObject(dto, req.user?.userId);
@@ -32,6 +35,7 @@ export class ObjectController {
   @ApiOperation({ summary: 'Get a digital object record by ID' })
   @ApiOkResponse({ type: ObjectResponseDto })
   @RequirePermission('object:read')
+  @GlobalScope()
   @Get(':id')
   getObject(@Param('id') id: string, @Request() req: any) {
     return this.svc.getObject(id, req.user?.userId);

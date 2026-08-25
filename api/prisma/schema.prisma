@@ -497,7 +497,8 @@ enum RoleScope {
   GLOBAL
   ORGANISATION
   ENTITY
-  DEPARTMENT // reserved — no Department model yet; treated as ENTITY scope
+  ORG_UNIT // scopeId is an OrgUnit.id; a grant covers that unit and everything under it
+  DEPARTMENT // deprecated — never used; superseded by ORG_UNIT, kept because a value cannot be dropped
 }
 
 // ─── Verification Workflow ────────────────────────────────────────────────────

@@ -11,6 +11,7 @@ import { CreateEntityDto } from './dto/create-entity.dto';
 import { UpdateKycStatusDto } from './dto/update-kyc-status.dto';
 import { EntityPageDto, EntityQueryDto, EntityResponseDto } from './dto/entity-response.dto';
 import { RequirePermission } from '../iam/permission.decorator';
+import { GlobalScope, ScopedTo } from '../iam/scope.decorator';
 
 @ApiBearerAuth()
 @ApiTags('entities')
@@ -21,6 +22,7 @@ export class EntityController {
   @ApiOperation({ summary: 'List registered entities (paginated)' })
   @ApiOkResponse({ type: EntityPageDto })
   @RequirePermission('entity:read')
+  @GlobalScope()
   @Get()
   listEntities(@Query() q: EntityQueryDto) {
     const page = Math.max(1, parseInt(q.page ?? '1', 10) || 1);
@@ -31,6 +33,7 @@ export class EntityController {
   @ApiOperation({ summary: 'Register a new legal entity' })
   @ApiCreatedResponse({ type: EntityResponseDto })
   @RequirePermission('entity:create')
+  @GlobalScope()
   @Post()
   createEntity(@Body() dto: CreateEntityDto, @Request() req: any) {
     return this.svc.createEntity(dto, req.user?.userId);
@@ -39,6 +42,7 @@ export class EntityController {
   @ApiOperation({ summary: 'Get a registered entity by ID' })
   @ApiOkResponse({ type: EntityResponseDto })
   @RequirePermission('entity:read')
+  @ScopedTo({ target: 'ENTITY', from: 'param', name: 'id' })
   @Get(':id')
   getEntity(@Param('id') id: string) {
     return this.svc.getEntity(id);
@@ -47,6 +51,7 @@ export class EntityController {
   @ApiOperation({ summary: 'Update the KYC status of an entity' })
   @ApiOkResponse({ type: EntityResponseDto })
   @RequirePermission('entity:approve')
+  @ScopedTo({ target: 'ENTITY', from: 'param', name: 'id' })
   @Patch(':id/kyc-status')
   updateKycStatus(@Param('id') id: string, @Body() dto: UpdateKycStatusDto, @Request() req: any) {
     return this.svc.updateKycStatus(id, dto, req.user?.userId);

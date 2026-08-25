@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Request } from '@nestjs/common';
 import { ApiBearerAuth, ApiCreatedResponse, ApiNoContentResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { RequirePermission } from '../iam/permission.decorator';
+import { GlobalScope } from '../iam/scope.decorator';
 import { AssignSaRoleDto } from './dto/assign-sa-role.dto';
 import { CreateServiceAccountDto } from './dto/create-service-account.dto';
 import { ServiceAccountsService } from './service-accounts.service';
@@ -12,6 +13,9 @@ export class ServiceAccountsController {
   constructor(private readonly svc: ServiceAccountsService) {}
 
   @RequirePermission('serviceaccount:create')
+  // A service account is a machine identity that carries its own roles, so
+  // minting one is another way to create authority. Organisation-wide only.
+  @GlobalScope()
   @ApiOperation({ summary: 'Create a service account (returns clientSecret ONCE)' })
   @ApiCreatedResponse()
   @Post()
@@ -20,6 +24,7 @@ export class ServiceAccountsController {
   }
 
   @RequirePermission('serviceaccount:read')
+  @GlobalScope()
   @ApiOperation({ summary: 'List service accounts' })
   @ApiOkResponse()
   @Get()
@@ -28,6 +33,7 @@ export class ServiceAccountsController {
   }
 
   @RequirePermission('serviceaccount:read')
+  @GlobalScope()
   @ApiOperation({ summary: 'Get a service account' })
   @ApiOkResponse()
   @Get(':id')
@@ -36,6 +42,7 @@ export class ServiceAccountsController {
   }
 
   @RequirePermission('serviceaccount:create')
+  @GlobalScope()
   @ApiOperation({ summary: 'Deactivate a service account' })
   @HttpCode(200)
   @Patch(':id/deactivate')
@@ -44,6 +51,7 @@ export class ServiceAccountsController {
   }
 
   @RequirePermission('serviceaccount:create')
+  @GlobalScope()
   @ApiOperation({ summary: 'Rotate the client secret (returns new secret ONCE)' })
   @HttpCode(200)
   @Post(':id/rotate-secret')
@@ -52,6 +60,7 @@ export class ServiceAccountsController {
   }
 
   @RequirePermission('serviceaccount:create')
+  @GlobalScope()
   @ApiOperation({ summary: 'Assign a role to a service account' })
   @ApiCreatedResponse()
   @Post(':id/roles')
@@ -60,6 +69,7 @@ export class ServiceAccountsController {
   }
 
   @RequirePermission('serviceaccount:read')
+  @GlobalScope()
   @ApiOperation({ summary: 'List a service account\'s active role assignments' })
   @ApiOkResponse()
   @Get(':id/roles')
@@ -68,6 +78,7 @@ export class ServiceAccountsController {
   }
 
   @RequirePermission('serviceaccount:create')
+  @GlobalScope()
   @ApiOperation({ summary: 'Revoke a role assignment' })
   @ApiNoContentResponse()
   @HttpCode(204)
