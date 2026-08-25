@@ -29,6 +29,10 @@ export const routes: Routes = [
   { path: 'users/new', loadComponent: () => import('./pages/users/new/create-user.component').then(m => m.CreateUserComponent), canActivate: [authGuard] },
   { path: 'users/:id', loadComponent: () => import('./pages/users/detail/user-detail.component').then(m => m.UserDetailComponent), canActivate: [authGuard] },
 
+  // Organisational structure
+  { path: 'org-units', loadComponent: () => import('./pages/org-units/org-chart.component').then(m => m.OrgChartComponent), canActivate: [authGuard] },
+  { path: 'org-units/:id', loadComponent: () => import('./pages/org-units/org-unit-detail.component').then(m => m.OrgUnitDetailComponent), canActivate: [authGuard] },
+
   // Roles & Permissions
   { path: 'roles', loadComponent: () => import('./pages/roles/roles.component').then(m => m.RolesComponent), canActivate: [authGuard] },
 

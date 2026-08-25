@@ -62,6 +62,43 @@ export interface RoleAssignment {
   assignedBy: string; assignedAt: string; expiresAt?: string | null; isActive: boolean;
   role?: { id: string; code: string; name: string; description?: string | null };
 }
+// ── Organisational structure (S2 backend, WP-7.2 screens) ──
+export type OrgUnitType = 'ORGANISATION' | 'DIVISION' | 'DEPARTMENT';
+
+/** A person as the org-chart endpoints return them — never the full User record. */
+export interface OrgPerson {
+  id: string; username: string; displayName?: string | null; isActive?: boolean;
+}
+export interface OrgUnit {
+  id: string; entityId: string; unitType: OrgUnitType;
+  name: string; code?: string | null;
+  parentId?: string | null; headUserId?: string | null;
+  head?: OrgPerson | null;
+  /** True when the seat is empty OR the appointed head has been deactivated. */
+  headVacant: boolean;
+  memberCount?: number; childCount?: number;
+  isActive: boolean; createdAt: string;
+}
+/** Only present on the tree view — the flat list leaves it undefined. */
+export interface OrgUnitNode extends OrgUnit { children?: OrgUnitNode[]; }
+export interface OrgUnitRef { id: string; name: string; unitType: OrgUnitType; code?: string | null; }
+export interface OrgUnitDetail extends OrgUnit {
+  parent?: OrgUnitRef | null;
+  children: OrgUnitRef[];
+  members: Array<OrgPerson & { managerId?: string | null }>;
+  /** Walked upward from the unit: nearest parent first, root last. Reverse it
+   *  for a breadcrumb. */
+  ancestry: OrgUnitRef[];
+}
+export interface ApprovalChain {
+  userId: string;
+  unit: OrgUnitRef | null;
+  reviewer: OrgPerson | null;
+  approver: OrgPerson | null;
+  canRequestStamp: boolean;
+  blockers: string[];
+}
+
 export interface Permission { id: string; code: string; name: string; description?: string | null; resource: string; action: string; }
 export interface Role {
   id: string; code: string; name: string; description?: string | null; isSystem: boolean; createdAt: string;
@@ -213,6 +250,37 @@ export class ApiService {
   listRoles(): Observable<Role[]> { return this.http.get<Role[]>('/v1/roles'); }
   getRole(id: string): Observable<Role> { return this.http.get<Role>(`/v1/roles/${id}`); }
   listPermissions(): Observable<Permission[]> { return this.http.get<Permission[]>('/v1/permissions'); }
+
+  // ── Organisational structure ──
+  listOrgUnits(opts: { entityId?: string; tree?: boolean; includeInactive?: boolean } = {}): Observable<{ data: OrgUnitNode[]; total?: number }> {
+    const params: Record<string, string> = {};
+    if (opts.entityId) params['entityId'] = opts.entityId;
+    if (opts.tree) params['tree'] = 'true';
+    if (opts.includeInactive) params['includeInactive'] = 'true';
+    return this.http.get<{ data: OrgUnitNode[]; total?: number }>('/v1/org-units', { params });
+  }
+  getOrgUnit(id: string): Observable<OrgUnitDetail> {
+    return this.http.get<OrgUnitDetail>(`/v1/org-units/${id}`);
+  }
+  createOrgUnit(body: { entityId: string; unitType: OrgUnitType; name: string; code?: string; parentId?: string; headUserId?: string }): Observable<OrgUnit> {
+    return this.http.post<OrgUnit>('/v1/org-units', body);
+  }
+  updateOrgUnit(id: string, body: { name?: string; code?: string; parentId?: string }): Observable<OrgUnit> {
+    return this.http.patch<OrgUnit>(`/v1/org-units/${id}`, body);
+  }
+  /** Send null to leave the seat vacant — the API treats absent and null alike. */
+  setOrgUnitHead(id: string, headUserId: string | null): Observable<OrgUnit> {
+    return this.http.patch<OrgUnit>(`/v1/org-units/${id}/head`, { headUserId });
+  }
+  deactivateOrgUnit(id: string): Observable<OrgUnit> {
+    return this.http.patch<OrgUnit>(`/v1/org-units/${id}/deactivate`, {});
+  }
+  setUserPlacement(userId: string, body: { orgUnitId?: string | null; managerId?: string | null; personEntityId?: string | null }): Observable<unknown> {
+    return this.http.patch(`/v1/users/${userId}/placement`, body);
+  }
+  approvalChain(userId: string): Observable<ApprovalChain> {
+    return this.http.get<ApprovalChain>(`/v1/users/${userId}/approval-chain`);
+  }
 
   // ── Verification Cases ──
   listCases(opts: { entityId?: string; status?: string; caseType?: string; limit?: number; offset?: number } = {}): Observable<CasePage> {

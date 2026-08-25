@@ -42,6 +42,7 @@ export class AppComponent implements OnInit {
     { label: 'Cases', link: '/verification-cases', perms: ['entity:read'] },
     { label: 'Relationships', link: '/relationships', perms: ['relationship:read'] },
     { label: 'Certificates', link: '/requests', perms: ['cert:read', 'cert:request'] },
+    { label: 'Org chart', link: '/org-units', perms: ['orgunit:read'] },
     { label: 'Users', link: '/users', perms: ['user:read'] },
     { label: 'Roles', link: '/roles', perms: ['user:read', 'iso:manage'] },
     { label: 'Audit', link: '/audit', perms: ['audit:read'] },

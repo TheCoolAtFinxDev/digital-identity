@@ -1,0 +1,11 @@
+# Keep the build context to sources. Without this, COPY . . drags the host's
+# node_modules, .angular cache and a previous dist into the image — which is how
+# /usr/share/nginx/html accumulated 136 files from several builds when a clean
+# one produces 58. Stale chunks are not harmless: a browser holding a cached
+# index.html from an earlier build still finds every file it asks for, so it
+# keeps running the old app indefinitely instead of failing and reloading.
+node_modules
+dist
+.angular
+Dockerfile
+.dockerignore
