@@ -115,6 +115,13 @@ else
   FAILED="$FAILED scoped-authority"
 fi
 
+stage "Unit keys suite (Sprint 3)"
+if bash scripts/e2e-unit-keys.sh "$BASE" 2>&1 | tee "$LOGDIR/e2e-unit-keys.log" | tail -20; then
+  printf "${GRN}  unit keys suite passed${NC}\n"
+else
+  FAILED="$FAILED unit-keys"
+fi
+
 stage "Feature suite (F1-F6)"
 if bash scripts/e2e-features.sh "$BASE" 2>&1 | tee "$LOGDIR/e2e-features.log" | tail -25; then
   printf "${GRN}  feature suite passed${NC}\n"

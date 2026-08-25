@@ -18,12 +18,18 @@ model CertificateRequest {
   keyBits     Int?
   entityId    String?
   entity      Entity?       @relation(fields: [entityId], references: [id])
+  // A certificate is held by a legal entity OR by an organisational unit, never
+  // both — a database CHECK enforces it. A unit is not an Entity: it has no
+  // legal existence and no KYB of its own.
+  orgUnitId   String?
+  orgUnit     OrgUnit?      @relation(fields: [orgUnitId], references: [id])
   certificate Certificate?
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
 
   @@index([status])
   @@index([entityId])
+  @@index([orgUnitId])
 }
 
 enum RequestStatus {
@@ -316,6 +322,8 @@ model OrgUnit {
   updatedAt  DateTime    @updatedAt
 
   members User[] @relation("OrgUnitMembers")
+  // The unit's own signing certificates — a department stamp is signed with these.
+  certificateRequests CertificateRequest[]
 
   @@index([entityId])
   @@index([parentId])

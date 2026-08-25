@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { IamService } from '../iam/iam.service';
+import { ScopeResolverService } from '../iam/scope-resolver.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PolicyService } from '../policy/policy.service';
 import { CreateCertRequestDto } from './dto/create-cert-request.dto';
@@ -32,6 +33,7 @@ export class CertificateService {
     private readonly prisma: PrismaService,
     private readonly policy: PolicyService,
     private readonly iam: IamService,
+    private readonly scopes: ScopeResolverService,
   ) {}
 
   async createRequest(dto: CreateCertRequestDto, userId?: string) {
@@ -302,6 +304,145 @@ export class CertificateService {
     return certificate;
   }
 
+  /**
+   * Issue an HSM-managed certificate held by an organisational unit.
+   *
+   * This is the key a department stamp is signed with. It belongs to the unit,
+   * not to whoever heads it, so the stamp keeps verifying after that head has
+   * left the company — and revoking a departed person's own key never
+   * invalidates the department's past stamps.
+   *
+   * A unit has no KYB of its own because it has no legal existence. It inherits
+   * standing from the ORGANISATION entity its chart hangs off, so that entity
+   * being APPROVED is the precondition. A deactivated unit is refused outright:
+   * a dissolved department must not be able to start stamping again.
+   */
+  async issueForOrgUnit(orgUnitId: string, userId: string) {
+    const unit = await this.prisma.orgUnit.findUnique({
+      where: { id: orgUnitId },
+      include: { entity: { include: { orgProfile: true } } },
+    });
+    if (!unit) throw new NotFoundException(`Org unit ${orgUnitId} not found`);
+
+    const canIssue = await this.resolveIssuePermissionForUnit(userId, orgUnitId);
+    if (!canIssue) {
+      await this.audit(AuditEvent.PERMISSION_CHECK_FAILED, {
+        entityId: unit.entityId, userId,
+        detail: { permissionCode: 'cert:issue', orgUnitId, route: '/v1/cert-requests/org-unit', method: 'POST' },
+      });
+      throw new ForbiddenException('Permission required: cert:issue');
+    }
+
+    if (!unit.isActive) {
+      await this.audit(AuditEvent.REQUEST_REJECTED, {
+        entityId: unit.entityId, userId,
+        detail: { reason: 'ORG_UNIT_DEACTIVATED', orgUnitId },
+      });
+      throw new UnprocessableEntityException(
+        `${unit.name} is deactivated. A unit that no longer exists cannot be issued a signing key.`,
+      );
+    }
+
+    const entity = unit.entity;
+    if (!(entity.status === EntityStatus.APPROVED && entity.kycStatus === 'APPROVED')) {
+      await this.audit(AuditEvent.REQUEST_REJECTED, {
+        entityId: unit.entityId, userId,
+        detail: {
+          reason: 'ENTITY_NOT_APPROVED', orgUnitId,
+          entityStatus: entity.status, kycStatus: entity.kycStatus,
+        },
+      });
+      throw new UnprocessableEntityException(
+        `${unit.name} inherits its standing from ${entity.name}, which must be APPROVED first. ` +
+          `Current status: ${entity.status} / kycStatus: ${entity.kycStatus}`,
+      );
+    }
+
+    // policy_strict supplies C, O and CN; OU is optional and is what names the
+    // unit inside the organisation. CN reads as "Org — Unit" so a person looking
+    // at the certificate in any viewer can tell whose department seal this is.
+    const country = (entity.country || 'NA').toUpperCase();
+    const clean = (v: string) => v.replace(/[\/\n\r]/g, ' ').trim();
+    const orgName = clean(entity.orgProfile?.legalName || entity.name);
+    const unitName = clean(unit.code ? `${unit.name} (${unit.code})` : unit.name);
+    const subject = `/C=${country}/O=${orgName}/OU=${unitName}/CN=${orgName} - ${unitName}`;
+
+    const keyLabel = `unit-${orgUnitId.slice(0, 8)}-${Date.now()}`;
+    const keyId = randomBytes(8).toString('hex');
+    const caDir = process.env.CA_DIR ?? '/opt/ee-ca';
+
+    let csrPem: string;
+    try {
+      csrPem = await this.generateManagedCsr(subject, keyLabel, keyId, caDir);
+    } catch (err) {
+      await this.audit(AuditEvent.REQUEST_REJECTED, {
+        entityId: unit.entityId, userId,
+        detail: { reason: 'HSM_KEYGEN_OR_CSR_FAILED', orgUnitId, error: (err as Error).message },
+      });
+      throw new InternalServerErrorException(`HSM key generation / CSR failed: ${(err as Error).message}`);
+    }
+
+    await this.audit(AuditEvent.KEY_GENERATED, {
+      entityId: unit.entityId, userId,
+      detail: {
+        keyLabel, keyId, custody: 'HSM', holder: 'ORG_UNIT', orgUnitId,
+        unitName: unit.name, unitType: unit.unitType,
+        token: process.env.HSM_TOKEN_LABEL ?? 'econet-ca',
+      },
+    });
+
+    const profile = 'usr_entity_cert';
+    const { subject: parsedSubject, keyBits } = await this.policy.validateCsr(csrPem, profile);
+    let signed: Awaited<ReturnType<typeof this.sign>>;
+    try {
+      signed = await this.sign(csrPem, profile, caDir);
+    } catch (err) {
+      await this.audit(AuditEvent.REQUEST_REJECTED, {
+        entityId: unit.entityId, userId,
+        detail: { reason: 'SIGNING_FAILED', orgUnitId, error: (err as Error).message },
+      });
+      throw err;
+    }
+
+    const certificate = await this.prisma.$transaction(async (tx) => {
+      const req = await tx.certificateRequest.create({
+        data: {
+          status: RequestStatus.ISSUED, csrPem, profile,
+          subject: parsedSubject, keyBits,
+          // entityId stays null — the holder is the unit, and the database
+          // refuses a request that names both.
+          orgUnitId,
+        },
+      });
+      return tx.certificate.create({
+        data: {
+          serial: signed.serial,
+          certPem: signed.certPem,
+          profile,
+          subject: parsedSubject,
+          issuer: signed.issuer,
+          fingerprint: signed.fingerprint,
+          validFrom: signed.validFrom,
+          validTo: signed.validTo,
+          hsmManaged: true,
+          hsmKeyLabel: keyLabel,
+          hsmKeyId: keyId,
+          requestId: req.id,
+        },
+      });
+    });
+
+    await this.audit(AuditEvent.CERTIFICATE_ISSUED, {
+      entityId: unit.entityId, userId,
+      detail: {
+        serial: signed.serial, fingerprint: signed.fingerprint, managed: true,
+        holder: 'ORG_UNIT', orgUnitId, unitName: unit.name, keyLabel,
+      },
+    });
+
+    return { ...certificate, orgUnitId, unitName: unit.name, unitType: unit.unitType };
+  }
+
   /** Generate a keypair in the HSM and return a CSR signed by that key. */
   private async generateManagedCsr(subject: string, label: string, keyId: string, caDir: string): Promise<string> {
     const module = process.env.PKCS11_MODULE ?? '/usr/local/lib/libpkcs11-proxy.so';
@@ -371,9 +512,10 @@ export class CertificateService {
   // ─── Lifecycle (F4) ──────────────────────────────────────────────────────────
 
   /** List/filter certificates: by entity, by expiry window, and revoked inclusion. */
-  async listCertificates(opts: { entityId?: string; expiringInDays?: number; includeRevoked?: boolean }) {
+  async listCertificates(opts: { entityId?: string; orgUnitId?: string; expiringInDays?: number; includeRevoked?: boolean }) {
     const where: Record<string, unknown> = {};
     if (opts.entityId) where['request'] = { entityId: opts.entityId };
+    if (opts.orgUnitId) where['request'] = { orgUnitId: opts.orgUnitId };
 
     if (opts.expiringInDays != null) {
       const now = new Date();
@@ -391,7 +533,13 @@ export class CertificateService {
         serial: true, subject: true, issuer: true, fingerprint: true,
         validFrom: true, validTo: true, isRevoked: true, revokedAt: true,
         hsmManaged: true, hsmKeyLabel: true, createdAt: true,
-        request: { select: { entityId: true } },
+        request: {
+          select: {
+            entityId: true,
+            orgUnitId: true,
+            orgUnit: { select: { name: true, unitType: true, code: true } },
+          },
+        },
       },
     });
 
@@ -399,7 +547,15 @@ export class CertificateService {
     return certs.map((c) => {
       const { request, ...rest } = c;
       const status = c.isRevoked ? 'REVOKED' : now > c.validTo ? 'EXPIRED' : 'GOOD';
-      return { ...rest, entityId: request?.entityId ?? null, status };
+      return {
+        ...rest,
+        entityId: request?.entityId ?? null,
+        orgUnitId: request?.orgUnitId ?? null,
+        // Named so a list of serials is readable without a second lookup —
+        // "Finance" says more at a glance than a UUID.
+        orgUnitName: request?.orgUnit?.name ?? null,
+        status,
+      };
     });
   }
 
@@ -524,6 +680,26 @@ export class CertificateService {
     }
 
     return false;
+  }
+
+  /**
+   * cert:issue for a unit-held certificate.
+   *
+   * Reuses the same resolver the permission guard uses, so the rule is stated
+   * once: a grant on the unit, on any unit above it, or on the organisation
+   * entity the chart hangs off. A division-scoped certificate manager can
+   * therefore issue keys for the departments beneath them and nowhere else.
+   */
+  private async resolveIssuePermissionForUnit(userId: string, orgUnitId: string): Promise<boolean> {
+    if (await this.iam.hasPermission(userId, 'cert:issue')) return true;
+
+    const candidates = await this.scopes.resolve(
+      { target: 'ORG_UNIT', from: 'param', name: 'id' },
+      { params: { id: orgUnitId }, body: {} },
+    );
+    if (!candidates?.length) return false;
+
+    return this.iam.hasPermission(userId, 'cert:issue', candidates);
   }
 
   private async sign(csrPem: string, profile: string, caDir: string, sans: string[] = []) {

@@ -10,6 +10,7 @@ import { CertificateService } from './certificate.service';
 import { CertRequestPageDto, CertRequestResponseDto, CertificateResponseDto } from './dto/cert-response.dto';
 import { CertRequestQueryDto } from './dto/cert-request-query.dto';
 import { CreateCertRequestDto } from './dto/create-cert-request.dto';
+import { IssueOrgUnitCertDto } from './dto/issue-org-unit.dto';
 import { IssueManagedDto } from './dto/issue-managed.dto';
 import { CertListQueryDto } from './dto/cert-list-query.dto';
 import { RenewManagedDto } from './dto/renew-managed.dto';
@@ -56,6 +57,20 @@ export class CertificateController {
     return this.svc.issueManagedCertificate(dto.entityId, req.user.userId);
   }
 
+  @ApiOperation({
+    summary: "Issue a managed signing key for an organisational unit",
+    description:
+      "The key a department stamp is signed with. Held by the unit rather than by whoever heads it, so the stamp keeps verifying after that head leaves. The unit must be active and the ORGANISATION entity its chart hangs off must be APPROVED — a unit has no KYB of its own.",
+  })
+  @ApiCreatedResponse({ type: CertificateResponseDto })
+  @HttpCode(201)
+  @Post('cert-requests/org-unit')
+  issueForOrgUnit(@Body() dto: IssueOrgUnitCertDto, @Request() req: any) {
+    // Scoped cert:issue is resolved inside the service, as for the entity path:
+    // the target unit is in the body, and the rule walks the org chart.
+    return this.svc.issueForOrgUnit(dto.orgUnitId, req.user.userId);
+  }
+
   @ApiOperation({ summary: 'Issue a certificate for a NEW request' })
   @ApiCreatedResponse({ type: CertificateResponseDto })
   @HttpCode(201)
@@ -83,6 +98,7 @@ export class CertificateController {
   listCertificates(@Query() q: CertListQueryDto) {
     return this.svc.listCertificates({
       entityId: q.entityId,
+      orgUnitId: q.orgUnitId,
       expiringInDays: q.expiringInDays,
       includeRevoked: q.includeRevoked,
     });

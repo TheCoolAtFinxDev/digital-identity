@@ -11,6 +11,12 @@ export class CertListQueryDto {
   @Matches(UUID_RE, { message: 'entityId must be a valid UUID' })
   entityId?: string;
 
+  @ApiPropertyOptional({ description: 'Limit to certificates held by one organisational unit' })
+  @IsOptional()
+  @IsString()
+  @Matches(UUID_RE, { message: 'orgUnitId must be a valid UUID' })
+  orgUnitId?: string;
+
   @ApiPropertyOptional({ description: 'Only certificates expiring within this many days (not yet expired, not revoked)' })
   @IsOptional()
   // Guard the parse: an absent query param must stay undefined, not become NaN.
